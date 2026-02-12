@@ -1,0 +1,166 @@
+# ========================================================================
+# SYSTEM & EDITORS 
+# ========================================================================
+.DS_Store
+.DS_Store?
+.cache/
+._*
+Thumbs.db
+Desktop.ini
+*.swo
+*.tmp
+*.temp
+.vscode/
+.idea/
+.vs/
+.zed
+.cursor
+*.sublime-workspace
+*.sublime-project
+
+# ========================================================================
+# ENVIRONMENTS & BACKUPS (Personal Prefs)
+# ========================================================================
+# 'e/' is the custom venv name; others are standard
+e/
+env/
+venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+backup/
+Backup*/
+*.old
+*.old/
+*~
+*.bak
+*.swp
+
+# ========================================================================
+# SECRETS & CLOUD (NEVER TRACK)
+# ========================================================================
+.env
+.env.*
+!.env.example
+.envrc
+auth.json
+secrets.json
+*.pem
+*.key
+*.pfx
+credentials.json
+google-token.json
+microsoft-token.json
+
+# ========================================================================
+# NODE.JS / NEXT.JS / VITE / WEB
+# ========================================================================
+node_modules/
+dist/
+build/
+out/
+.next/
+/.next/
+.open-next/
+.nuxt/
+.svelte-kit/
+.vercel
+.serverless/
+.wrangler
+.cache/
+.parcel-cache/
+.eslintcache
+.stylelintcache
+*.tsbuildinfo
+**/*vite-react-ssg-temp
+.vite-react-ssg-temp/
+
+# NOTE: Lock files (bun.lockb, package-lock.json, etc.) are NOT ignored 
+# so projects stay reproducible when shared.
+
+# ========================================================================
+# PYTHON
+# ========================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.pkl
+*.erun
+*.pyc
+
+# ========================================================================
+# COMPILED LANGUAGES (GO, RUST, JAVA, C++)
+# ========================================================================
+# Rust/Go/C++ Binaries
+target/
+debug/
+bin/
+obj/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.o
+*.obj
+*.pdb
+*.out
+__debug_bin
+*.prof
+*.pprof
+
+# Java
+*.class
+*.jar
+*.war
+*.ear
+.gradle/
+
+# ========================================================================
+# PHP & LARAVEL
+# ========================================================================
+vendor/
+.phpunit.result.cache
+Homestead.json
+Homestead.yaml
+.user.ini
+php_errors.log
+error_log
+
+# ========================================================================
+# LOGS, COVERAGE & DATA
+# ========================================================================
+*.log
+*.log.*
+logs/
+/logs
+coverage/
+/coverage/
+.nyc_output/
+*.lcov
+*.coverage
+coverage.xml
+*.coveragexml
+htmlcov/
+.rpt2_cache/
+.rts2_cache_*/
+
+# ========================================================================
+# DATABASES & LARGE STORAGE
+# ========================================================================
+*.sqlite
+*.sqlite-journal
+sqlite.db
+db.sqlite3
+*.dbmdl
+*.mdf
+*.ldf
+*.zip
+*.tgz
+*.gz
