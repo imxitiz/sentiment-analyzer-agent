@@ -145,7 +145,9 @@ class EnvConfig:
         value = os.environ.get(key, default)
         self._cache[key] = value
 
-        is_secret = key.upper().endswith(("_KEY", "_SECRET", "_TOKEN", "_PASSWORD"))
+        is_secret = key.upper().endswith(
+            ("_KEY", "_SECRET", "_TOKEN", "_PASSWORD", "API_KEY")
+        )
         display = _mask_secret(value) if (value and is_secret) else (value or "<unset>")
 
         logger.debug(

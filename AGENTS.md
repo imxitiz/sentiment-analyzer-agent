@@ -1,6 +1,28 @@
 # Sentiment Analyzer Agent
 
-> AI-powered end-to-end sentiment analysis pipeline: data collection → preprocessing → LLM classification → interactive dashboard.
+> AI-powered end-to-end sentiment analysis pipeline: data collection → preprocessing → sentiment classification → interactive dashboard.
+
+---
+
+## ⚠️ Context Continuity Protocol — READ THIS FIRST
+
+**This file is how you stay in sync.** Every AI chat session starts with zero context. When the previous AI finishes and the user starts a new chat, all that accumulated knowledge — what was built, what failed, what decisions were made, what's half-done — is **gone**. This file is the **only bridge** between sessions.
+
+**Your responsibilities as an AI agent working on this project:**
+
+1. **On session start**: Read this entire file. You now know everything the previous agent knew. Do not re-discover things already documented here. Do not ask questions already answered below.
+2. **During work**: If you discover something non-obvious (a gotcha, a pattern, a shortcut, a decision rationale, where something lives, why something was built a certain way), **write it to this file** before your session ends.
+3. **On session end**: Before the user closes the chat, update this file with:
+   - Any architectural changes you made
+   - Any new modules, files, or paths you created
+   - Any gotchas or debugging insights you discovered
+   - Any decisions made and **why**
+   - Updated "Current State" if you changed what's built/in-progress
+4. **Never assume the next agent will have your context.** They won't. Write it here or it's lost forever.
+
+**The user should not have to re-explain the project to every new AI.** This file does that job. If a new agent reads this and still doesn't understand the project, this file has failed — fix it.
+
+**Cross-reference**: `docs/VISION.md` is the canonical project vision (what we're building and why). This file (`AGENTS.md`) is the canonical operating manual (how to work on it, what's done, what to know). Read both.
 
 ---
 
@@ -45,7 +67,7 @@ cd Interface && bun run check
 
 ## Architecture
 
-```
+```arch
 ┌────────────────────────────────────────────────────────────────────┐
 │                         main.py (CLI entry)                        │
 │                    OrchestratorAgent / LangGraph                   │
@@ -63,12 +85,14 @@ Pipeline flow:  Plan → Search → Scrape → Clean → Analyze → Summarize
                                               Interface (Bun + React)
 ```
 
+> **Full end-to-end pipeline details**: see `docs/VISION.md` Section 2 for the complete 6-phase pipeline with data flow diagrams, storage strategy, and multi-agent architecture.
+
 ---
 
 ## Key Paths
 
 | Path | Purpose |
-|---|---|
+| --- | --- |
 | `main.py` | CLI entry point — runs orchestrator pipeline |
 | `env.py` | `EnvConfig` singleton — audited, logged env var access |
 | `BaseLLM/` | Unified LLM abstraction layer (Gemini, Ollama, OpenAI) |
@@ -85,6 +109,65 @@ Pipeline flow:  Plan → Search → Scrape → Clean → Analyze → Summarize
 | `data/scrapes/` | SQLite DBs per topic (gitignored) |
 | `logs/` | Rotating log files (gitignored) |
 | `docs/` | Design docs, ideas, project specs |
+| `docs/VISION.md` | **Canonical project vision** — full pipeline, architecture, data strategy, what's built vs planned |
+| `docs/IDEA.md`, etc. | Brainstorming artifacts — reference only, may be outdated |
+
+---
+
+## Agent Knowledge Base
+
+This section captures **non-obvious discoveries, gotchas, shortcuts, and accumulated insights** from working on this project. Every AI agent session should add to this section when they learn something that would save the next agent time. If you spent more than a few minutes figuring something out, write it here.
+
+### Project Identity & Vision
+
+- **What this IS**: A "Self-Driving Research Lab" for sentiment analysis. User provides a topic → system autonomously collects data → runs sentiment → shows results on a real-time dashboard.
+- **Primary use case**: Election sentiment monitoring (e.g., "Nepal elections 2026"), but system is topic-agnostic.
+- **Full pipeline**: Topic → Keywords → Link Harvest (SQLite) → Deep Scrape (MongoDB) → Clean → Sentiment (HuggingFace model) → Vector DB → Convex DB → Dashboard + RAG chat.
+- **Read `docs/VISION.md`** for the complete end-to-end pipeline diagram and architecture. It's the canonical source of truth for *what* we're building. This file (`AGENTS.md`) is the canonical source for *how* to work on it.
+
+### Critical Architecture Decisions (and WHY)
+
+- **Sentiment analysis uses a dedicated HuggingFace model, NOT an LLM.** LLMs are too slow and expensive for per-post scoring at scale. The sentiment model runs locally and is purpose-built for classification. Never route sentiment through `BaseLLM`.
+- **Sentiment is a continuous spectrum (0→1), not binary pos/neg.** Binary misses nuance. "slightly concerned" ≠ "furious". Always use continuous scores.
+- **Different LLMs for different agents.** Orchestrator gets a powerful model (Gemini Pro, GPT-4o). Scraping/cleaning gets a cheap one (Gemini Flash, GPT-4o-mini). This is already supported by `BaseLLM` — each agent can call `get_llm()` with a different provider/model.
+- **LLMs trigger work, code does the work.** The LLM decides *what* to scrape and *when*. The actual HTTP requests, file writes, and DB inserts are done by deterministic Python code, not LLM tool calls. Never let the LLM "decide" to save data — the code pipeline handles that.
+- **Non-destructive versioning.** Refreshing a topic creates Version 2 alongside Version 1. Old data is never overwritten or deleted. Research needs historical comparison.
+- **SQLite for links (fast, transient), MongoDB for raw data (unstructured, metadata-rich), Vector DB for embeddings (semantic search), Convex DB for real-time dashboard updates.**
+
+### Codebase Patterns & Shortcuts
+
+- **To test the entire BaseLLM chain**: `get_llm("dummy").generate("test")` → returns `[DUMMY-LLM] test`. No API keys needed.
+- **The `python` command may not work** on some setups — use `python3` explicitly if `python` produces no output.
+- **`BaseLLM/_registry.py`** is the single source of truth for all model names, providers, and aliases. If you need to add a model, start there.
+- **`agents.old/`** is the OLD orchestrator code. It works but is being replaced. The new multi-agent system will live in `agents/` (not yet created).
+- **All prompt templates** use `str.format()` placeholders (e.g., `{topic}`). They live in `prompts/raw_prompts/*.txt`. To add a new task, create a new `.txt` file there.
+- **The Interface** is a Bun-served React app. `cd Interface && bun dev` starts it on port 3000. It has basic API routes but no dashboard yet.
+- **Logs** go to `logs/` (gitignored). If logs aren't appearing, check `LOG_FILE_ENABLED=true` in `.env`.
+- **Data** goes to `data/scrapes/` (gitignored). Each topic gets its own SQLite file.
+
+### Common Pitfalls to Avoid
+
+- **Don't import `langchain_*` directly.** Always go through `BaseLLM`. This is a hard rule.
+- **Don't use `os.getenv()`.** Always use `from env import config`. It logs access and masks secrets.
+- **Don't use `print()` for operational output.** Use `from Logging import get_logger`.
+- **Don't run `npm` or `yarn` in the Interface.** It's Bun-only. `bun install`, `bun dev`, `bun run check`.
+- **Don't write multi-line git commit messages with `-m`.** They can fail silently. Use single-line: `git commit -m "type(scope): summary"`
+- **Don't hardcode model names.** They belong in `BaseLLM/_registry.py`.
+
+### What's Built vs What's Not (save yourself the search)
+
+| Done ✅ | Not Yet ❌ |
+| --- | --- |
+| BaseLLM adapters (Gemini, Ollama, OpenAI, Dummy) | Multi-agent LangGraph pipeline |
+| Production structured logging | HuggingFace sentiment model integration |
+| EnvConfig singleton | MongoDB integration |
+| Prompt template manager | Vector DB (FAISS/Pinecone) |
+| Serper web search | Convex DB / real-time layer |
+| SQLite link storage | Data cleaning agent |
+| Basic Interface scaffold | Dashboard visualizations |
+| LangGraph scaffold (agents.old/) | RAG chat interface |
+| | Browser-based scraping (Playwright) |
+| | Evaluation suite |
 
 ---
 
@@ -192,7 +275,7 @@ python main.py -t "nepal elections" -p openai -w langgraph
 
 ### Interface API (Bun server, port 3000)
 
-```
+```routes
 GET  /api/hello          → { message, method }
 POST /api/chat           → { reply, received, timestamp }
      body: { "message": "..." }
@@ -234,7 +317,7 @@ class State(TypedDict):
 ### Environment Variables
 
 | Variable | Required | Default | Purpose |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `GOOGLE_API_KEY` | For Gemini | — | Google Gemini API key |
 | `OPENAI_API_KEY` | For OpenAI | — | OpenAI/ChatGPT API key |
 | `SERPER_API_KEY` | For search | — | Serper web search API key |
@@ -249,7 +332,7 @@ class State(TypedDict):
 ### Config Files
 
 | File | Purpose |
-|---|---|
+| --- | --- |
 | `.env` | Local secrets (gitignored) |
 | `pyproject.toml` | Python project config, dependencies, Ruff settings |
 | `Interface/biome.jsonc` | Biome (TS linter/formatter) config |
@@ -280,7 +363,7 @@ class State(TypedDict):
 ## Troubleshooting — Top 8 Problems & Fixes
 
 | Problem | Fix |
-|---|---|
+| --- | --- |
 | `ModuleNotFoundError: langchain_*` | `uv sync` or `uv pip install langchain-google-genai langchain-ollama langchain-openai` |
 | Gemini adapter fails at init | Set `GOOGLE_API_KEY` in `.env` |
 | OpenAI adapter fails at init | Set `OPENAI_API_KEY` in `.env` |
@@ -325,7 +408,7 @@ class State(TypedDict):
 Update these when changing:
 
 | What changed | Update where |
-|---|---|
+| --- | --- |
 | Python dependency | `pyproject.toml` → `uv sync` |
 | New env variable | `env.py` `_KEYS` dict + AGENTS.md config table |
 | Build/run commands | AGENTS.md Quick Start + TL;DR |
@@ -339,10 +422,33 @@ Update these when changing:
 
 ## Self-Update Policy
 
-- Update `AGENTS.md` only for **significant** changes: architecture/service-boundary changes; package manager or build command changes; config or feature flag schema changes; public API or persistence schema changes.
-- Do **not** update for small bug fixes, cosmetic refactors, or private non-behavior edits unless they change a verbatim instruction/command in this file.
-- When updating, **improve and merge** into existing content — do not replace human-written guidance without documented justification in the PR.
-- Do not include changelog entries or who/when metadata inside AGENTS.md.
+**This is a living document and the ONLY bridge between AI sessions.** Treat it accordingly.
+
+### When to Update AGENTS.md
+
+- **Always update at session end** if you made any changes to the codebase. The next AI session starts from zero — if you don't write it here, it's lost.
+- Update for: architecture changes, new modules/files/paths, config changes, build/run command changes, new gotchas or debugging insights, tech decisions and rationale, anything you spent time figuring out.
+- Add discoveries to the **Agent Knowledge Base** section — that's specifically for "things I learned so the next agent doesn't have to."
+- If you changed what's built or in-progress, update the **"What's Built vs What's Not"** table in the Agent Knowledge Base.
+
+### When NOT to Update
+
+- Tiny bug fixes that don't change how the project works or is structured.
+- Cosmetic refactors that don't change any public interface.
+- Don't add changelog entries or timestamps — this isn't a changelog.
+
+### How to Update
+
+- **Merge into existing content** — don't duplicate or replace sections. If a section covers your topic, add to it.
+- **Be concrete** — "Fixed the adapter" is useless. "OpenAI adapter needs `api_key` and `base_url` passed to `__init__`, not `_build_llm()`" is useful.
+- **Keep it scannable** — bullet points, tables, code snippets. No essays.
+- This file is sent directly to every new AI agent as its first context. It must be **clear, accurate, comprehensive, and current**.
+
+### Cross-References
+
+- `docs/VISION.md` — **what** we're building (full pipeline, architecture, design decisions). Read this for project understanding.
+- `AGENTS.md` (this file) — **how** to work on it (code patterns, conventions, gotchas, current state). Read this for operational context.
+- When docs contradict each other, `docs/VISION.md` wins for vision, `AGENTS.md` wins for code conventions.
 
 ---
 
@@ -454,15 +560,47 @@ If a change requires many manual edits, refactor until change is localized.
 
 ## How to Continue — Next Steps
 
-1. Build proper multi-agent LangGraph pipeline
-2. Add sentiment classification model (HuggingFace)
-3. Implement data cleaning agent
-4. Add vector store for semantic search (FAISS/Pinecone)
-5. Build interactive dashboard (Interface)
-6. Add more scrapers (Twitter/X, TikTok, news)
-7. Implement evaluation suite (accuracy/precision/recall)
-8. Deploy with monitoring and circuit breakers
+Prioritized roadmap. Each item is a meaningful chunk of work (1-2 sessions).
+
+1. **Build multi-agent LangGraph pipeline** (`agents/` — new folder, replacing `agents.old/`)
+   - Orchestrator agent that receives topic and creates a plan
+   - Searcher/Harvester agent that discovers links (uses Serper, saves to SQLite)
+   - Wire them with LangGraph state machine, checkpoint-able
+   - Use `BaseLLM` for LLM calls — powerful model for orchestrator, cheap for searcher
+
+2. **Add HuggingFace sentiment model**
+   - NOT an LLM — dedicated classification model (e.g., `distilroberta-base` fine-tuned for sentiment)
+   - Continuous score output (0→1), not binary
+   - Create `SentimentAnalyzer/` module with adapter pattern like BaseLLM
+   - Must run locally, fast inference, no API costs
+
+3. **Implement data cleaning pipeline**
+   - Deduplication, spam filtering, text normalization
+   - Can use cheap LLM for relevance filtering
+   - Input: raw scraped data → Output: cleaned data ready for sentiment
+
+4. **Add MongoDB for raw scraped data**
+   - Replace or augment SQLite for storing actual post content
+   - SQLite stays for link discovery queue only
+   - MongoDB stores unstructured content with max metadata
+
+5. **Add Vector DB (FAISS/Pinecone) for embeddings**
+   - Embed cleaned text for semantic search
+   - Powers the RAG chat interface later
+
+6. **Build dashboard visualizations (Interface)**
+   - Sentiment spectrum (bell curve), time-series trends, platform comparison
+   - See `docs/VISION.md` Section 7 "Dashboard Vision" for the 8 target widgets
+   - Consider Convex DB for real-time reactive updates
+
+7. **Add more scrapers** (Twitter/X, TikTok, news sites, browser-based via Playwright)
+
+8. **Build RAG chat interface** — query collected data conversationally
+
+9. **Implement evaluation suite** (accuracy, precision, recall for sentiment model)
+
+10. **Deploy with monitoring** and circuit breakers
 
 ---
 
-*This is a living document. Update it when the project's architecture, commands, or conventions change. Do not use it as a changelog.*
+*This file is the bridge between AI sessions. Update it when you change the project. The next AI starts from zero — what you don't write here is lost forever and other Agent again have to search for that same info.*
