@@ -29,7 +29,7 @@
 ## TL;DR
 
 - **Purpose**: Collect social media data, run sentiment analysis (positive/neutral/negative), and surface insights via an interactive dashboard — primary use case is election sentiment monitoring.
-- **Top 3 commands**: `uv run python main.py -t "topic"` · `cd Interface && bun dev` · `uv sync`
+- **Top 3 commands**: `uv run python main.py -t "topic" --demo` · `cd Interface && bun dev` · `uv sync`
 - **Owner**: Kshitiz Sharma ([@imxitiz](https://github.com/imxitiz))
 
 ---
@@ -53,13 +53,19 @@ cp .env.example .env   # then fill in API keys
 # 4. Run the orchestrator (simple pipeline)
 uv run python main.py --topic "electric vehicles" --provider gemini
 
+# 4b. Run in demo mode (no API keys needed!)
+uv run python main.py --topic "Nepal elections 2026" --demo
+
 # 5. Start the frontend (Bun required)
 cd Interface && bun install && bun dev
 
 # 6. Lint (Python)
 uv run ruff check .
 
-# 7. Lint (Interface)
+# 7. LSP (Python) - Pyrefly (A fast type checker and language server for Python with powerful IDE features too)
+uv run pyrefly check
+
+# 8. Lint (Interface)
 cd Interface && bun run check
 ```
 
@@ -70,7 +76,17 @@ cd Interface && bun run check
 ```arch
 ┌────────────────────────────────────────────────────────────────────┐
 │                         main.py (CLI entry)                        │
-│                    OrchestratorAgent / LangGraph                   │
+│                   --demo / --provider / --topic                    │
+├────────────────────────────────────────────────────────────────────┤
+│                    agents/ (Multi-Agent Pipeline)                   │
+│   ┌───────────────────────────────────────────────────────────┐    │
+│   │  OrchestratorAgent (react mode — has tools)               │    │
+│   │    ├─ delegate_to_planner → PlannerAgent (direct mode)    │    │
+│   │    ├─ ask_human → Human-in-the-loop tool                  │    │
+│   │    └─ (future: delegate_to_searcher, scraper, …)          │    │
+│   └───────────────────────────────────────────────────────────┘    │
+│    BaseAgent → _registry → tools/_registry                         │
+│    Demo mode: provider="dummy" → static data, no LLM needed       │
 ├────────┬──────────────┬───────────────┬───────────────┬───────────┤
 │ prompts│  BaseLLM     │  DataScraper  │   Logging     │   env.py  │
 │ (.txt) │  (adapters)  │  (connectors) │  (structured) │ (config)  │
@@ -93,24 +109,29 @@ Pipeline flow:  Plan → Search → Scrape → Clean → Analyze → Summarize
 
 | Path | Purpose |
 | --- | --- |
-| `main.py` | CLI entry point — runs orchestrator pipeline |
+| `main.py` | CLI entry point — `--topic`, `--provider`, `--model`, `--demo` |
 | `env.py` | `EnvConfig` singleton — audited, logged env var access |
-| `BaseLLM/` | Unified LLM abstraction layer (Gemini, Ollama, OpenAI) |
+| `agents/` | **Multi-agent pipeline** (orchestrator, planner, …) |
+| `agents/base.py` | `BaseAgent` ABC — react/direct/demo modes, tool wrapping, prompt resolution |
+| `agents/_registry.py` | `@register_agent` decorator, `build_agent()`, `list_agents()` |
+| `agents/tools/_registry.py` | `@agent_tool` decorator, tool catalog with categories |
+| `agents/tools/human.py` | Human-in-the-loop tool (CLI input, swappable backend) |
+| `agents/orchestrator/` | Orchestrator agent — coordinates sub-agents via tool delegation |
+| `agents/planner/` | Planner agent — generates `ResearchPlan` (keywords, hashtags, queries) |
+| `agents/<name>/prompts/` | Agent-local prompt templates (`system.txt`, etc.) |
+| `BaseLLM/` | Unified LLM abstraction layer (Gemini, Ollama, OpenAI, Dummy) |
 | `BaseLLM/adapter.py` | `BaseLLMAdapter` ABC — DRY base with sync/async generate |
 | `BaseLLM/_registry.py` | Single source of truth for all model names & provider aliases |
-| `BaseLLM/main.py` | `get_llm()` factory — the only function agents need |
+| `BaseLLM/main.py` | `get_llm()` factory + `DummyAdapter` (zero-dependency) |
 | `Logging/__init__.py` | Production structured logger (JSON files, ring buffer, ANSI) |
 | `DataScraper/` | Data collection connectors (Serper, Reddit, Facebook) |
 | `DataScraper/sqlite_store.py` | SQLite helpers for scraped data persistence |
-| `prompts/` | Prompt template manager + raw `.txt` templates |
-| `prompts/raw_prompts/` | Prompt files: `plan.txt`, `scrape.txt`, `clean.txt`, `summarize.txt` |
-| `agents.old/` | Orchestrator agent + LangGraph workflow (being rebuilt) |
+| `prompts/` | Global prompt template manager + raw `.txt` templates |
+| `prompts/raw_prompts/` | Shared prompts: `plan.txt`, `scrape.txt`, `clean.txt`, `summarize.txt` |
 | `Interface/` | Frontend — Bun + React + Tailwind dashboard (in progress) |
 | `data/scrapes/` | SQLite DBs per topic (gitignored) |
 | `logs/` | Rotating log files (gitignored) |
-| `docs/` | Design docs, ideas, project specs |
-| `docs/VISION.md` | **Canonical project vision** — full pipeline, architecture, data strategy, what's built vs planned |
-| `docs/IDEA.md`, etc. | Brainstorming artifacts — reference only, may be outdated |
+| `docs/VISION.md` | **Canonical project vision** — full pipeline, architecture, what's built vs planned |
 
 ---
 
@@ -136,14 +157,20 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 
 ### Codebase Patterns & Shortcuts
 
+- **To test the entire pipeline end-to-end**: `uv run python main.py --demo -t "any topic"` — runs orchestrator → planner with static data, no API keys needed.
 - **To test the entire BaseLLM chain**: `get_llm("dummy").generate("test")` → returns `[DUMMY-LLM] test`. No API keys needed.
 - **The `python` command may not work** on some setups — use `python3` explicitly if `python` produces no output.
 - **`BaseLLM/_registry.py`** is the single source of truth for all model names, providers, and aliases. If you need to add a model, start there.
-- **`agents.old/`** is the OLD orchestrator code. It works but is being replaced. The new multi-agent system will live in `agents/` (not yet created).
-- **All prompt templates** use `str.format()` placeholders (e.g., `{topic}`). They live in `prompts/raw_prompts/*.txt`. To add a new task, create a new `.txt` file there.
+- **`agents/_registry.py`** auto-registers agents by their `_name` via `@register_agent` decorator. Import the agent module → it's registered.
+- **`agents/tools/_registry.py`** auto-registers tools via `@agent_tool(category="...")` decorator. Category-based discovery.
+- **Agent execution modes**: `react` (has tools → LangGraph tool-calling loop), `direct` (no tools → single LLM call), `demo` (no LLM → static data).
+- **Demo mode**: Set `provider="dummy"` or use `--demo` CLI flag. Each agent's `_demo_invoke()` returns realistic static data. The full pipeline runs — only the data is synthetic.
+- **Prompt resolution order**: agent-local `prompts/` dir → global `prompts/raw_prompts/`. Agent prompts live alongside the agent code, global prompts are shared templates.
+- **All prompt templates** use `str.format()` placeholders (e.g., `{topic}`). To add a new task, create a new `.txt` file in the appropriate `prompts/` dir.
 - **The Interface** is a Bun-served React app. `cd Interface && bun dev` starts it on port 3000. It has basic API routes but no dashboard yet.
 - **Logs** go to `logs/` (gitignored). If logs aren't appearing, check `LOG_FILE_ENABLED=true` in `.env`.
 - **Data** goes to `data/scrapes/` (gitignored). Each topic gets its own SQLite file.
+- **LangChain v1 API**: Use `create_agent` from `langchain.agents` (NOT `create_react_agent` from `langgraph.prebuilt` — that's deprecated). Pass `system_prompt=` (not `prompt=`).
 
 ### Common Pitfalls to Avoid
 
@@ -158,16 +185,19 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 
 | Done ✅ | Not Yet ❌ |
 | --- | --- |
-| BaseLLM adapters (Gemini, Ollama, OpenAI, Dummy) | Multi-agent LangGraph pipeline |
-| Production structured logging | HuggingFace sentiment model integration |
-| EnvConfig singleton | MongoDB integration |
-| Prompt template manager | Vector DB (FAISS/Pinecone) |
-| Serper web search | Convex DB / real-time layer |
-| SQLite link storage | Data cleaning agent |
-| Basic Interface scaffold | Dashboard visualizations |
-| LangGraph scaffold (agents.old/) | RAG chat interface |
-| | Browser-based scraping (Playwright) |
-| | Evaluation suite |
+| BaseLLM adapters (Gemini, Ollama, OpenAI, Dummy) | HuggingFace sentiment model integration |
+| Production structured logging | MongoDB integration |
+| EnvConfig singleton | Vector DB (FAISS/Pinecone) |
+| Prompt template manager (global + agent-local) | Convex DB / real-time layer |
+| Serper web search | Data cleaning agent |
+| SQLite link storage | Dashboard visualizations |
+| Basic Interface scaffold | RAG chat interface |
+| **Multi-agent framework** (BaseAgent, registries) | Browser-based scraping (Playwright) |
+| **OrchestratorAgent** (react mode, sub-agent delegation) | Evaluation suite |
+| **PlannerAgent** (structured output → ResearchPlan) | Searcher/Harvester agent |
+| **Tool registry** (@agent_tool, categories) | Scraper agent |
+| **Human-in-the-loop tool** (pluggable backend) | Summarizer agent |
+| **Demo mode** (static data, full pipeline, no LLM) | |
 
 ---
 
@@ -251,16 +281,46 @@ db_path = scraper("elections", "reddit")        # scrape → SQLite
 
 Connectors: `serper.py` (web search via Serper API), `reddit.py`, `facebook.py`. All data stored in `data/scrapes/<topic>.db`.
 
-### Agents — Orchestration (in progress)
+### Agents — Multi-Agent Pipeline
+
+The `agents/` package is a modular, extensible multi-agent framework. Each agent inherits from `BaseAgent`, registers itself via `@register_agent`, and can operate in three modes: **react** (tool-calling loop), **direct** (single LLM call), or **demo** (static data).
 
 ```python
-from agents.orchestrator_agent import OrchestratorAgent
+from agents import OrchestratorAgent, PlannerAgent, build_agent
 
-agent = OrchestratorAgent(llm_provider="gemini")
-result = agent.run("elections")  # plan → search → scrape → summarize
+# Build manually
+orchestrator = OrchestratorAgent(llm_provider="gemini")
+result = orchestrator.invoke("Nepal elections 2026")
+
+# Build from registry
+agent = build_agent("orchestrator", llm_provider="openai")
+
+# Demo mode (no LLM needed)
+demo = OrchestratorAgent(llm_provider="dummy")
+result = demo.invoke("any topic")  # static data, full pipeline
 ```
 
-LangGraph workflow in `agents.old/langgraph_orchestrator.py`. Being refactored into a proper multi-agent system.
+**OrchestratorAgent** (react mode): Coordinates the full pipeline. Sub-agents are auto-wrapped as tools so the LLM decides when to delegate. Default sub-agents: `[PlannerAgent]`.
+
+**PlannerAgent** (direct mode): Generates a structured `ResearchPlan` (Pydantic model) with keywords, hashtags, platform strategies, and search queries. Uses `with_structured_output()` for JSON-structured responses.
+
+**Adding a new agent**:
+
+1. Create `agents/<name>/agent.py` — set `_name`, `_description`, override `_register_tools()` (for react mode) or `invoke()` (for direct mode)
+2. Create `agents/<name>/prompts/system.txt` — agent's system prompt
+3. Override `_demo_invoke()` for demo mode with realistic static data
+4. Import in `agents/__init__.py` to trigger `@register_agent`
+
+**Adding a new tool**:
+
+```python
+from agents.tools import agent_tool
+
+@agent_tool(category="search")
+def web_search(query: str) -> str:
+    """Search the web for information."""
+    return results
+```
 
 ---
 
@@ -269,8 +329,9 @@ LangGraph workflow in `agents.old/langgraph_orchestrator.py`. Being refactored i
 ### Python CLI
 
 ```bash
-python main.py --topic "electric vehicles" --provider gemini --workflow simple
-python main.py -t "nepal elections" -p openai -w langgraph
+python main.py --topic "electric vehicles" --provider gemini
+python main.py -t "nepal elections" -p openai -m gpt-4o
+python main.py -t "Tesla stock" --demo  # no API keys needed
 ```
 
 ### Interface API (Bun server, port 3000)
@@ -357,6 +418,9 @@ class State(TypedDict):
 3. `config.require("NONEXISTENT_KEY")` raises `EnvironmentError`
 4. `get_prompt("plan", topic="test")` returns formatted prompt text (not `[missing-prompt:...]`)
 5. `prepare_db_for_topic("test")` creates SQLite DB at `data/scrapes/test.db`
+6. `uv run python main.py --demo -t "test"` runs full pipeline with static data (exit 0)
+7. `OrchestratorAgent(llm_provider="dummy").invoke("test")` returns structured output with planner data
+8. `list_agents()` returns `["orchestrator", "planner"]` — all agents registered
 
 ---
 
@@ -562,44 +626,49 @@ If a change requires many manual edits, refactor until change is localized.
 
 Prioritized roadmap. Each item is a meaningful chunk of work (1-2 sessions).
 
-1. **Build multi-agent LangGraph pipeline** (`agents/` — new folder, replacing `agents.old/`)
-   - Orchestrator agent that receives topic and creates a plan
-   - Searcher/Harvester agent that discovers links (uses Serper, saves to SQLite)
-   - Wire them with LangGraph state machine, checkpoint-able
-   - Use `BaseLLM` for LLM calls — powerful model for orchestrator, cheap for searcher
+1. ~~**Build multi-agent LangGraph pipeline**~~ ✅ DONE
+   - BaseAgent ABC, agent registry, tool registry, orchestrator, planner
+   - Demo mode with static data (no LLM needed)
+   - `uv run python main.py --demo -t "any topic"` works end-to-end
 
-2. **Add HuggingFace sentiment model**
+2. **Build Searcher/Harvester agent** (next priority)
+   - Discovers links via Serper API, saves to SQLite
+   - Takes the PlannerAgent's `ResearchPlan` as input
+   - Uses search queries and keywords from the plan
+   - Wire as sub-agent of Orchestrator (auto-becomes a tool)
+
+3. **Add HuggingFace sentiment model**
    - NOT an LLM — dedicated classification model (e.g., `distilroberta-base` fine-tuned for sentiment)
    - Continuous score output (0→1), not binary
    - Create `SentimentAnalyzer/` module with adapter pattern like BaseLLM
    - Must run locally, fast inference, no API costs
 
-3. **Implement data cleaning pipeline**
+4. **Implement data cleaning pipeline**
    - Deduplication, spam filtering, text normalization
    - Can use cheap LLM for relevance filtering
    - Input: raw scraped data → Output: cleaned data ready for sentiment
 
-4. **Add MongoDB for raw scraped data**
+5. **Add MongoDB for raw scraped data**
    - Replace or augment SQLite for storing actual post content
    - SQLite stays for link discovery queue only
    - MongoDB stores unstructured content with max metadata
 
-5. **Add Vector DB (FAISS/Pinecone) for embeddings**
+6. **Add Vector DB (FAISS/Pinecone) for embeddings**
    - Embed cleaned text for semantic search
    - Powers the RAG chat interface later
 
-6. **Build dashboard visualizations (Interface)**
+7. **Build dashboard visualizations (Interface)**
    - Sentiment spectrum (bell curve), time-series trends, platform comparison
    - See `docs/VISION.md` Section 7 "Dashboard Vision" for the 8 target widgets
    - Consider Convex DB for real-time reactive updates
 
-7. **Add more scrapers** (Twitter/X, TikTok, news sites, browser-based via Playwright)
+8. **Add more scrapers** (Twitter/X, TikTok, news sites, browser-based via Playwright)
 
-8. **Build RAG chat interface** — query collected data conversationally
+9. **Build RAG chat interface** — query collected data conversationally
 
-9. **Implement evaluation suite** (accuracy, precision, recall for sentiment model)
+10. **Implement evaluation suite** (accuracy, precision, recall for sentiment model)
 
-10. **Deploy with monitoring** and circuit breakers
+11. **Deploy with monitoring** and circuit breakers
 
 ---
 
