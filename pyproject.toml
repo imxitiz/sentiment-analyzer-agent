@@ -16,6 +16,9 @@ dependencies = [
     "ollama>=0.6.1",
     "crawlbase>=1.0.0",
     "load-dotenv>=0.1.0",
+    "fastapi>=0.134.0",
+    "uvicorn>=0.41.0",
+    "websockets>=15.0.1",
 ]
 
 [tool.pyrefly]

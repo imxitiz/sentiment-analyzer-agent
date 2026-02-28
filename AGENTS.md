@@ -29,7 +29,7 @@
 ## TL;DR
 
 - **Purpose**: Collect social media data, run sentiment analysis (positive/neutral/negative), and surface insights via an interactive dashboard — primary use case is election sentiment monitoring.
-- **Top 3 commands**: `uv run python main.py -t "topic" --demo` · `cd Interface && bun dev` · `uv sync`
+- **Top 3 commands**: `uv run python -m server` · `cd Interface && bun dev` · `uv run python main.py -t "topic" --demo`
 - **Owner**: Kshitiz Sharma ([@imxitiz](https://github.com/imxitiz))
 
 ---
@@ -56,16 +56,21 @@ uv run python main.py --topic "electric vehicles" --provider gemini
 # 4b. Run in demo mode (no API keys needed!)
 uv run python main.py --topic "Nepal elections 2026" --demo
 
-# 5. Start the frontend (Bun required)
-cd Interface && bun install && bun dev
+# 5. Start the backend API server (demo mode, no keys needed)
+uv run python -m server
+# API: http://localhost:8000  Docs: http://localhost:8000/api/docs
 
-# 6. Lint (Python)
+# 6. Start the frontend (Bun required)
+cd Interface && bun install && bun dev
+# Frontend: http://localhost:3000 (needs backend running on :8000)
+
+# 7. Lint (Python)
 uv run ruff check .
 
-# 7. LSP (Python) - Pyrefly (A fast type checker and language server for Python with powerful IDE features too)
+# 8. LSP (Python) - Pyrefly (A fast type checker and language server for Python with powerful IDE features too)
 uv run pyrefly check
 
-# 8. Lint (Interface)
+# 9. Lint (Interface)
 cd Interface && bun run check
 ```
 
@@ -99,6 +104,16 @@ cd Interface && bun run check
 Pipeline flow:  Plan → Search → Scrape → Clean → Analyze → Summarize
                                                             ↓
                                               Interface (Bun + React)
+
+┌───────────────────────────── Web Interface ────────────────────────┐
+│  server/ (FastAPI on :8000)         Interface/ (Bun on :3000)     │
+│  ├── REST sessions CRUD            ├── React 19 + TanStack Router │
+│  ├── WebSocket event streaming     ├── TanStack Query (cache)     │
+│  ├── Mock data generator           ├── Recharts (charts)          │
+│  └── Pipeline runner (demo/live)   ├── shadcn/ui + Tailwind       │
+│                                    └── WebSocket client (auto-    │
+│                                        reconnect)                 │
+└───────────────────────────────────────────────────────────────────┘
 ```
 
 > **Full end-to-end pipeline details**: see `docs/VISION.md` Section 2 for the complete 6-phase pipeline with data flow diagrams, storage strategy, and multi-agent architecture.
@@ -128,7 +143,15 @@ Pipeline flow:  Plan → Search → Scrape → Clean → Analyze → Summarize
 | `DataScraper/sqlite_store.py` | SQLite helpers for scraped data persistence |
 | `prompts/` | Global prompt template manager + raw `.txt` templates |
 | `prompts/raw_prompts/` | Shared prompts: `plan.txt`, `scrape.txt`, `clean.txt`, `summarize.txt` |
-| `Interface/` | Frontend — Bun + React + Tailwind dashboard (in progress) |
+| `server/` | **FastAPI backend** — REST API + WebSocket + mock data + pipeline runner |
+| `server/app.py` | FastAPI app factory (CORS, routes, health check) |
+| `server/models.py` | All Pydantic models (Session, Events, Results) — TypeScript mirrors these |
+| `server/routes/sessions.py` | Session CRUD + start analysis endpoints |
+| `server/routes/ws.py` | WebSocket endpoint for real-time event streaming |
+| `server/services/session_manager.py` | In-memory session store + subscriber pattern |
+| `server/services/pipeline.py` | Pipeline runner bridge (demo + live modes) |
+| `server/services/__init__.py` | Mock data generator (`generate_mock_result()`) |
+| `Interface/` | **Frontend** — Bun + React + TanStack + Recharts + shadcn/ui |
 | `data/scrapes/` | SQLite DBs per topic (gitignored) |
 | `logs/` | Rotating log files (gitignored) |
 | `docs/VISION.md` | **Canonical project vision** — full pipeline, architecture, what's built vs planned |
@@ -167,7 +190,14 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 - **Demo mode**: Set `provider="dummy"` or use `--demo` CLI flag. Each agent's `_demo_invoke()` returns realistic static data. The full pipeline runs — only the data is synthetic.
 - **Prompt resolution order**: agent-local `prompts/` dir → global `prompts/raw_prompts/`. Agent prompts live alongside the agent code, global prompts are shared templates.
 - **All prompt templates** use `str.format()` placeholders (e.g., `{topic}`). To add a new task, create a new `.txt` file in the appropriate `prompts/` dir.
-- **The Interface** is a Bun-served React app. `cd Interface && bun dev` starts it on port 3000. It has basic API routes but no dashboard yet.
+- **The Interface** is a full-stack web app: React frontend (Bun, port 3000) + FastAPI backend (uvicorn, port 8000). Both must be running.
+- **To start both**: Terminal 1: `uv run python -m server` · Terminal 2: `cd Interface && bun dev`
+- **Frontend architecture**: TanStack Router (code-based, not file-based), TanStack Query (cache + polling), WebSocket client (auto-reconnect), Recharts for charts, shadcn/ui components.
+- **Backend architecture**: REST API for session CRUD, WebSocket for real-time event streaming, mock data generator for demo mode, pipeline runner that bridges to the agent system.
+- **Two UI modes**: Chat mode (real-time progress) → auto-switches to Dashboard mode (charts, filters, data table) on completion.
+- **All TypeScript types** in `Interface/src/lib/types.ts` mirror Python Pydantic models in `server/models.py` 1:1. Keep them in sync.
+- **Path alias**: `@/*` maps to `./src/*` in the Interface (configured in `tsconfig.json`). All imports use this.
+- **Demo mode works end-to-end in the web UI**: Backend generates mock data with realistic delays (~9s pipeline), frontend renders it all with charts and tables.
 - **Logs** go to `logs/` (gitignored). If logs aren't appearing, check `LOG_FILE_ENABLED=true` in `.env`.
 - **Data** goes to `data/scrapes/` (gitignored). Each topic gets its own SQLite file.
 - **LangChain v1 API**: Use `create_agent` from `langchain.agents` (NOT `create_react_agent` from `langgraph.prebuilt` — that's deprecated). Pass `system_prompt=` (not `prompt=`).
@@ -190,14 +220,19 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 | EnvConfig singleton | Vector DB (FAISS/Pinecone) |
 | Prompt template manager (global + agent-local) | Convex DB / real-time layer |
 | Serper web search | Data cleaning agent |
-| SQLite link storage | Dashboard visualizations |
-| Basic Interface scaffold | RAG chat interface |
+| SQLite link storage | RAG chat interface (placeholder only) |
 | **Multi-agent framework** (BaseAgent, registries) | Browser-based scraping (Playwright) |
 | **OrchestratorAgent** (react mode, sub-agent delegation) | Evaluation suite |
 | **PlannerAgent** (structured output → ResearchPlan) | Searcher/Harvester agent |
 | **Tool registry** (@agent_tool, categories) | Scraper agent |
 | **Human-in-the-loop tool** (pluggable backend) | Summarizer agent |
-| **Demo mode** (static data, full pipeline, no LLM) | |
+| **Demo mode** (static data, full pipeline, no LLM) | Live agent→server pipeline bridge |
+| **FastAPI backend** (REST + WebSocket + mock data) | |
+| **React dashboard** (TanStack Router/Query, Recharts) | |
+| **Chat UI** (messages, agent progress, adaptive input) | |
+| **Dashboard UI** (stats, charts, filters, data table) | |
+| **WebSocket streaming** (auto-reconnect, event replay) | |
+| **Mock data generator** (150 posts, 5 platforms, deterministic) | |
 
 ---
 
@@ -338,9 +373,23 @@ python main.py -t "Tesla stock" --demo  # no API keys needed
 
 ```routes
 GET  /api/hello          → { message, method }
-POST /api/chat           → { reply, received, timestamp }
-     body: { "message": "..." }
 GET  /api/hello/:name    → { message: "Hello, <name>!" }
+```
+
+### Backend API (FastAPI, port 8000)
+
+```routes
+GET    /api/health                    → { status, service }
+GET    /api/sessions                  → { sessions: Session[] }
+POST   /api/sessions                  → { session: Session }
+       body: { topic?, llm_provider?, llm_model? }
+GET    /api/sessions/{id}             → { session: Session }
+DELETE /api/sessions/{id}             → 204 No Content
+POST   /api/sessions/{id}/start       → { session: Session }
+       body: { topic, llm_provider?, llm_model? }
+POST   /api/sessions/{id}/messages    → { session: Session }
+       body: { content }
+WS     /ws/{session_id}               → AgentEvent stream (JSON)
 ```
 
 ### LangGraph State Shape
@@ -389,6 +438,10 @@ class State(TypedDict):
 | `LOG_MAX_BYTES` | No | `10485760` | Max log file size before rotation |
 | `LOG_BACKUP_COUNT` | No | `5` | Number of rotated log files to keep |
 | `LOG_BUFFER_SIZE` | No | `1000` | In-memory ring buffer size |
+| `SERVER_HOST` | No | `0.0.0.0` | FastAPI server bind host |
+| `SERVER_PORT` | No | `8000` | FastAPI server bind port |
+| `SERVER_DEBUG` | No | `true` | Enable uvicorn auto-reload |
+| `DEFAULT_LLM_PROVIDER` | No | `dummy` | Default provider for new web sessions |
 
 ### Config Files
 
@@ -421,6 +474,9 @@ class State(TypedDict):
 6. `uv run python main.py --demo -t "test"` runs full pipeline with static data (exit 0)
 7. `OrchestratorAgent(llm_provider="dummy").invoke("test")` returns structured output with planner data
 8. `list_agents()` returns `["orchestrator", "planner"]` — all agents registered
+9. `curl http://localhost:8000/api/health` returns `{"status":"ok"}` — backend server smoke test
+10. Create session → start analysis → check WebSocket events stream correctly
+11. `cd Interface && bun build src/frontend.tsx --outdir=dist` compiles 608 modules without errors
 
 ---
 
@@ -436,6 +492,10 @@ class State(TypedDict):
 | Interface won't start | `cd Interface && bun install && bun dev` — requires Bun runtime |
 | Logs not writing to file | Check `LOG_FILE_ENABLED=true` and `LOG_DIR=logs` in `.env` |
 | Serper search returns empty | Verify `SERPER_API_KEY` is set and valid |
+| Backend CORS errors in browser console | Backend CORS allows `localhost:3000` — make sure frontend runs on port 3000 |
+| WebSocket won't connect | Ensure backend is running on port 8000, check `ws://localhost:8000/ws/{id}` |
+| Recharts `Formatter` type error | Don't annotate formatter params — use `(value) => Number(value)` not `(value: number)` |
+| Frontend `Cannot find module` in IDE | TS language server lag — run `bun build` to verify; if build succeeds, ignore |
 
 ---
 
@@ -610,7 +670,7 @@ If a change requires many manual edits, refactor until change is localized.
 
 - **Commit message format**: `<type>(<scope>): <short summary>`
   - Types: `feat`, `fix`, `refactor`, `docs`, `chore`, `test`
-  - Scopes: `basellm`, `logging`, `env`, `scraper`, `agents`, `interface`, `prompts`
+  - Scopes: `basellm`, `logging`, `env`, `scraper`, `agents`, `interface`, `server`, `prompts`
   - Example: `feat(basellm): add Anthropic adapter`
 - **AGENTS.md edits**: `AGENTS.md: <short summary>`
 - **PR title**: `docs(agents): update AGENTS.md — <short summary>`
@@ -657,18 +717,24 @@ Prioritized roadmap. Each item is a meaningful chunk of work (1-2 sessions).
    - Embed cleaned text for semantic search
    - Powers the RAG chat interface later
 
-7. **Build dashboard visualizations (Interface)**
-   - Sentiment spectrum (bell curve), time-series trends, platform comparison
+7. ~~**Build full-stack web interface (FastAPI + React)**~~ ✅ DONE
+   - FastAPI backend: REST sessions CRUD, WebSocket event streaming, mock data generator, pipeline runner
+   - React frontend: TanStack Router/Query, Recharts charts, shadcn/ui, chat → dashboard adaptive UI
+   - Demo mode works end-to-end: `uv run python -m server` + `cd Interface && bun dev`
+   - See `server/README.md` and `Interface/README.md` for full docs
+
+8. **Enhance dashboard visualizations**
+   - Sentiment spectrum (bell curve), word cloud interactivity, geographic view
    - See `docs/VISION.md` Section 7 "Dashboard Vision" for the 8 target widgets
    - Consider Convex DB for real-time reactive updates
 
-8. **Add more scrapers** (Twitter/X, TikTok, news sites, browser-based via Playwright)
+9. **Add more scrapers** (Twitter/X, TikTok, news sites, browser-based via Playwright)
 
-9. **Build RAG chat interface** — query collected data conversationally
+10. **Build RAG chat interface** — query collected data conversationally
 
-10. **Implement evaluation suite** (accuracy, precision, recall for sentiment model)
+11. **Implement evaluation suite** (accuracy, precision, recall for sentiment model)
 
-11. **Deploy with monitoring** and circuit breakers
+12. **Deploy with monitoring** and circuit breakers
 
 ---
 
