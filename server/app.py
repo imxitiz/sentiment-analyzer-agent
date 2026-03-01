@@ -21,7 +21,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from server.config import server_config
-from server.routes import sessions, ws
+from server.routes import compare, export, sessions, ws
 
 
 def create_app() -> FastAPI:
@@ -49,6 +49,8 @@ def create_app() -> FastAPI:
 
     # ── Routes ────────────────────────────────────────────────────────
     app.include_router(sessions.router)
+    app.include_router(export.router)
+    app.include_router(compare.router)
     app.include_router(ws.router)
 
     # ── Health check ──────────────────────────────────────────────────

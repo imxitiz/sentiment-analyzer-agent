@@ -11,11 +11,13 @@
 
 import { useState, useEffect } from "react";
 import { useParams } from "@tanstack/react-router";
-import { MessageSquare, BarChart3, Loader2, AlertCircle, RefreshCw, Clock } from "lucide-react";
+import { MessageSquare, BarChart3, Loader2, AlertCircle, RefreshCw, Clock, GitCompare } from "lucide-react";
 import { useSession, useRefreshAnalysis, useSwitchVersion } from "@/hooks/use-sessions";
 import { useSessionWebSocket } from "@/hooks/use-websocket";
 import { ChatView } from "@/components/chat/chat-view";
 import { DashboardView } from "@/components/dashboard/dashboard-view";
+import { ComparisonView } from "@/components/dashboard/comparison-view";
+import { ExportButton } from "@/components/dashboard/export-button";
 import { VersionSwitcher } from "@/components/ui/version-switcher";
 import { cn } from "@/lib/utils";
 import type { ViewMode } from "@/lib/types";
@@ -60,6 +62,7 @@ export function SessionPage() {
   const showTabs = session.status === "completed" && session.result;
   const isRunning = isSessionActive(session.status);
   const canRefresh = session.status === "completed" && session.topic;
+  const hasMultipleVersions = session.version_history.length > 0;
 
   const handleRefresh = () => {
     if (!canRefresh) return;
@@ -123,6 +126,11 @@ export function SessionPage() {
             isPending={switchVersion.isPending}
           />
 
+          {/* Export button */}
+          {showTabs && (
+            <ExportButton sessionId={session.id} version={session.version} />
+          )}
+
           {canRefresh && (
             <button
               onClick={handleRefresh}
@@ -166,6 +174,20 @@ export function SessionPage() {
               <BarChart3 className="h-3.5 w-3.5" />
               Dashboard
             </button>
+            {hasMultipleVersions && (
+              <button
+                onClick={() => setViewMode("compare")}
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors",
+                  viewMode === "compare"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <GitCompare className="h-3.5 w-3.5" />
+                Compare
+              </button>
+            )}
           </div>
           )}
         </div>
@@ -175,6 +197,10 @@ export function SessionPage() {
       <div className="flex-1 min-h-0 overflow-hidden">
         {viewMode === "chat" ? (
           <ChatView session={session} events={events} />
+        ) : viewMode === "compare" ? (
+          <div className="h-full overflow-y-auto p-6">
+            <ComparisonView session={session} />
+          </div>
         ) : session.result ? (
           <DashboardView result={session.result} />
         ) : (

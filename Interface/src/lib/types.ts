@@ -118,6 +118,16 @@ export interface AnalysisResult {
   completed_at: string;
 }
 
+// ── Version History ───────────────────────────────────────────────────
+
+export interface VersionSnapshot {
+  version: number;
+  result: AnalysisResult | null;
+  events: AgentEvent[];
+  started_at: string;
+  completed_at: string | null;
+}
+
 // ── Session ───────────────────────────────────────────────────────────
 
 export interface Session {
@@ -125,6 +135,7 @@ export interface Session {
   topic: string | null;
   status: SessionStatus;
   version: number;
+  version_history: VersionSnapshot[];
   messages: ChatMessage[];
   events: AgentEvent[];
   result: AnalysisResult | null;
@@ -164,9 +175,71 @@ export interface VersionListResponse {
   versions: VersionSnapshot[];
 }
 
+// ── Comparison ────────────────────────────────────────────────────────
+
+export interface ComparisonRef {
+  session_id: string;
+  version?: number;
+}
+
+export interface CompareRequest {
+  base: ComparisonRef;
+  target: ComparisonRef;
+}
+
+export interface SentimentDelta {
+  avg_compound_before: number;
+  avg_compound_after: number;
+  delta: number;
+  positive_pct_before: number;
+  positive_pct_after: number;
+  negative_pct_before: number;
+  negative_pct_after: number;
+  neutral_pct_before: number;
+  neutral_pct_after: number;
+  total_posts_before: number;
+  total_posts_after: number;
+  direction: "improved" | "declined" | "stable";
+}
+
+export interface KeywordDelta {
+  added: string[];
+  removed: string[];
+  common: string[];
+}
+
+export interface PlatformDelta {
+  platform: string;
+  before_avg: number | null;
+  after_avg: number | null;
+  delta: number | null;
+  before_posts: number;
+  after_posts: number;
+}
+
+export interface ComparisonResult {
+  base_topic: string;
+  target_topic: string;
+  base_version: number;
+  target_version: number;
+  sentiment: SentimentDelta;
+  keywords: KeywordDelta;
+  platforms: PlatformDelta[];
+  narrative: string;
+  compared_at: string;
+}
+
+export interface CompareResponse {
+  comparison: ComparisonResult;
+}
+
+// ── Export ─────────────────────────────────────────────────────────────
+
+export type ExportFormat = "json" | "csv" | "md";
+
 // ── UI State ──────────────────────────────────────────────────────────
 
-export type ViewMode = "chat" | "dashboard";
+export type ViewMode = "chat" | "dashboard" | "compare";
 
 export interface SessionUIState {
   viewMode: ViewMode;

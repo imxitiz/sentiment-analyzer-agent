@@ -13,6 +13,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type {
+  CompareRequest,
   CreateSessionRequest,
   SendMessageRequest,
   Session,
@@ -137,5 +138,12 @@ export function useSwitchVersion() {
       qc.setQueryData(sessionKeys.detail(session.id), session);
       qc.invalidateQueries({ queryKey: sessionKeys.lists() });
     },
+  });
+}
+
+/** Compare two analysis results (versions or sessions). */
+export function useCompareAnalysis() {
+  return useMutation({
+    mutationFn: (req: CompareRequest) => api.compare(req),
   });
 }

@@ -11,7 +11,10 @@
  */
 
 import type {
+  CompareRequest,
+  CompareResponse,
   CreateSessionRequest,
+  ExportFormat,
   SendMessageRequest,
   Session,
   SessionDetailResponse,
@@ -100,5 +103,19 @@ export const api = {
         method: "POST",
         body: JSON.stringify(req),
       }).then((r) => r.session),
+
+    /** Get export download URL for a session. */
+    exportUrl: (id: string, format: ExportFormat, version?: number) => {
+      const params = new URLSearchParams({ format });
+      if (version != null) params.set("version", String(version));
+      return `${API_BASE_URL}/api/sessions/${id}/export?${params}`;
+    },
   },
+
+  /** Compare two analysis results (different versions or sessions). */
+  compare: (req: CompareRequest) =>
+    fetchJSON<CompareResponse>("/api/compare", {
+      method: "POST",
+      body: JSON.stringify(req),
+    }).then((r) => r.comparison),
 } as const;
