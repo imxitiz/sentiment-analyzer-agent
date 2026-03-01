@@ -147,11 +147,14 @@ Pipeline flow:  Plan → Search → Scrape → Clean → Analyze → Summarize
 | `server/app.py` | FastAPI app factory (CORS, routes, health check) |
 | `server/models.py` | All Pydantic models (Session, Events, Results) — TypeScript mirrors these |
 | `server/routes/sessions.py` | Session CRUD + start analysis endpoints |
+| `server/routes/export.py` | Export results as JSON / CSV / Markdown |
+| `server/routes/compare.py` | Compare two analysis versions or sessions |
 | `server/routes/ws.py` | WebSocket endpoint for real-time event streaming |
 | `server/services/session_manager.py` | In-memory session store + subscriber pattern |
 | `server/services/pipeline.py` | Pipeline runner bridge (demo + live modes) |
 | `server/services/__init__.py` | Mock data generator (`generate_mock_result()`) |
 | `Interface/` | **Frontend** — Bun + React + TanStack + Recharts + shadcn/ui |
+| `docs/FEATURES.md` | Detailed feature documentation (export, compare, versioning) |
 | `data/scrapes/` | SQLite DBs per topic (gitignored) |
 | `logs/` | Rotating log files (gitignored) |
 | `docs/VISION.md` | **Canonical project vision** — full pipeline, architecture, what's built vs planned |
@@ -233,6 +236,8 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 | **Dashboard UI** (stats, charts, filters, data table) | |
 | **WebSocket streaming** (auto-reconnect, event replay) | |
 | **Mock data generator** (150 posts, 5 platforms, deterministic) | |
+| **Export reports** (JSON / CSV / Markdown download) | |
+| **Version comparison** (structured diff, delta cards, narrative) | |
 
 ---
 
@@ -389,6 +394,10 @@ POST   /api/sessions/{id}/start       → { session: Session }
        body: { topic, llm_provider?, llm_model? }
 POST   /api/sessions/{id}/messages    → { session: Session }
        body: { content }
+GET    /api/sessions/{id}/export      → StreamingResponse (file download)
+       query: format={json|csv|md}, version?={n}
+POST   /api/compare                   → { comparison: ComparisonResult }
+       body: { base: {session_id, version?}, target: {session_id, version?} }
 WS     /ws/{session_id}               → AgentEvent stream (JSON)
 ```
 
