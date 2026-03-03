@@ -16,6 +16,7 @@ import asyncio
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 
+from agents.services import bootstrap_topic
 from server.models import (
     CreateSessionRequest,
     CreateSessionResponse,
@@ -100,6 +101,9 @@ async def start_analysis(
     session.topic = req.topic
     session.llm_provider = req.llm_provider
 
+    # Bootstrap DB checkpointing immediately on topic intake
+    bootstrap_topic(req.topic)
+
     # Add user message
     await session_manager.add_message(
         session_id, MessageRole.USER, req.topic,
@@ -153,6 +157,9 @@ async def refresh_analysis(
 
     topic = session.topic
     provider = session.llm_provider
+
+    # Refresh creates a new run entry linked to the same topic DB
+    bootstrap_topic(topic)
 
     # Bump version and clear old data
     session = await session_manager.refresh_session(session_id)

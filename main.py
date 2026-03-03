@@ -75,19 +75,8 @@ def main() -> None:
 
     logger.info("Starting analysis for topic: %s", topic)
 
-    if orchestrator.is_demo:
-        # Demo mode: single invoke, print formatted output
-        result = orchestrator.invoke(topic)
-        print(result["output"])
-    else:
-        # Production: stream execution steps
-        for step in orchestrator.stream(topic):
-            for key, value in step.items():
-                if not isinstance(value, dict):
-                    continue
-                for msg in value.get("messages", []):
-                    if hasattr(msg, "pretty_print"):
-                        msg.pretty_print()
+    result = orchestrator.invoke(topic)
+    print(result["output"])
 
     logger.info("Pipeline complete.")
 

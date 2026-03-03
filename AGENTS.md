@@ -127,10 +127,15 @@ Pipeline flow:  Plan → Search → Scrape → Clean → Analyze → Summarize
 | `main.py` | CLI entry point — `--topic`, `--provider`, `--model`, `--demo` |
 | `env.py` | `EnvConfig` singleton — audited, logged env var access |
 | `agents/` | **Multi-agent pipeline** (orchestrator, planner, …) |
-| `agents/base.py` | `BaseAgent` ABC — react/direct/demo modes, tool wrapping, prompt resolution |
+| `agents/base.py` | `BaseAgent` ABC — react/direct/demo modes, tool wrapping, prompt resolution, timeout/retry/circuit-breaker |
 | `agents/_registry.py` | `@register_agent` decorator, `build_agent()`, `list_agents()` |
+| `agents/services/` | Shared service layer for per-topic SQLite checkpoints |
+| `agents/services/planner_checkpoint.py` | Topic DB init + append-only persistence (`topic_inputs`, `pipeline_artifacts`) |
+| `agents/services/orchestrator_checkpoint.py` | Central orchestrator DB (`topic_runs`, `orchestrator_events`) + topic bootstrap |
 | `agents/tools/_registry.py` | `@agent_tool` decorator, tool catalog with categories |
 | `agents/tools/human.py` | Human-in-the-loop tool (CLI input, swappable backend) |
+| `agents/tools/search.py` | Tool: `google_search_snippets` (Serper API top results for planner context) |
+| `utils/serper.py` | Central Serper adapter utility (real API + demo fallback payload) |
 | `agents/orchestrator/` | Orchestrator agent — coordinates sub-agents via tool delegation |
 | `agents/planner/` | Planner agent — generates `ResearchPlan` (keywords, hashtags, queries) |
 | `agents/<name>/prompts/` | Agent-local prompt templates (`system.txt`, etc.) |
@@ -139,8 +144,7 @@ Pipeline flow:  Plan → Search → Scrape → Clean → Analyze → Summarize
 | `BaseLLM/_registry.py` | Single source of truth for all model names & provider aliases |
 | `BaseLLM/main.py` | `get_llm()` factory + `DummyAdapter` (zero-dependency) |
 | `Logging/__init__.py` | Production structured logger (JSON files, ring buffer, ANSI) |
-| `DataScraper/` | Data collection connectors (Serper, Reddit, Facebook) |
-| `DataScraper/sqlite_store.py` | SQLite helpers for scraped data persistence |
+| `DataScraper/` | Data collection connectors (placeholder currently; connectors planned) |
 | `prompts/` | Global prompt template manager + raw `.txt` templates |
 | `prompts/raw_prompts/` | Shared prompts: `plan.txt`, `scrape.txt`, `clean.txt`, `summarize.txt` |
 | `server/` | **FastAPI backend** — REST API + WebSocket + mock data + pipeline runner |
@@ -154,6 +158,7 @@ Pipeline flow:  Plan → Search → Scrape → Clean → Analyze → Summarize
 | `server/services/pipeline.py` | Pipeline runner bridge (demo + live modes) |
 | `server/services/__init__.py` | Mock data generator (`generate_mock_result()`) |
 | `Interface/` | **Frontend** — Bun + React + TanStack + Recharts + shadcn/ui |
+| `docs/agents/` | Agent-by-agent architecture docs (orchestrator/planner and future agents) |
 | `docs/FEATURES.md` | Detailed feature documentation (export, compare, versioning) |
 | `data/scrapes/` | SQLite DBs per topic (gitignored) |
 | `logs/` | Rotating log files (gitignored) |
@@ -204,6 +209,13 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 - **Logs** go to `logs/` (gitignored). If logs aren't appearing, check `LOG_FILE_ENABLED=true` in `.env`.
 - **Data** goes to `data/scrapes/` (gitignored). Each topic gets its own SQLite file.
 - **LangChain v1 API**: Use `create_agent` from `langchain.agents` (NOT `create_react_agent` from `langgraph.prebuilt` — that's deprecated). Pass `system_prompt=` (not `prompt=`).
+- **All agents now enforce bounded execution by default** in `BaseAgent`: timeout (default 300s), one retry, and circuit breaker after 3 consecutive failures (10m cooldown).
+- **Per-agent overrides are env-driven**: `AGENT_<AGENT_NAME>_TIMEOUT_SECONDS`, `AGENT_<AGENT_NAME>_MAX_RETRIES`, `AGENT_<AGENT_NAME>_CIRCUIT_BREAKER_THRESHOLD`, `AGENT_<AGENT_NAME>_CIRCUIT_BREAKER_COOLDOWN_SECONDS`.
+- **Planner persistence is append-only and shared across demo/live**: every run creates/uses `data/scrapes/<topic>.db` and writes both user/topic inputs + planner artifacts, so crashes are debuggable and resumable.
+- **Topic DB bootstrap is now orchestrator-owned**: when topic is received, orchestrator first writes to central `orchestrator.db` (`topic_runs`) and initializes topic DB before planner invocation.
+- **Agent lifecycle status is checkpointed in topic DB**: `agent_status` table tracks `working/retrying/completed/failed`, retry count, last error, and timestamps for resume/debug.
+- **Planner can do tool-based web grounding**: planner runs a tool-calling context pass via `google_search_snippets` (Serper) before producing the structured `ResearchPlan`.
+- **External provider code must be centralized**: keep API-specific logic (Serper, future providers) in `utils/` adapter files and call them from tools/services. Avoid direct HTTP integration scattered across agents.
 
 ### Common Pitfalls to Avoid
 
@@ -227,6 +239,8 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 | **Multi-agent framework** (BaseAgent, registries) | Browser-based scraping (Playwright) |
 | **OrchestratorAgent** (react mode, sub-agent delegation) | Evaluation suite |
 | **PlannerAgent** (structured output → ResearchPlan) | Searcher/Harvester agent |
+| **Agent resilience runtime** (timeout + retry + circuit breaker in `BaseAgent`) | Scraper agent |
+| **Planner checkpoint persistence** (topic SQLite DB with `topic_inputs` + `pipeline_artifacts`) | Summarizer agent |
 | **Tool registry** (@agent_tool, categories) | Scraper agent |
 | **Human-in-the-loop tool** (pluggable backend) | Summarizer agent |
 | **Demo mode** (static data, full pipeline, no LLM) | Live agent→server pipeline bridge |
@@ -441,6 +455,14 @@ class State(TypedDict):
 | `OPENAI_API_KEY` | For OpenAI | — | OpenAI/ChatGPT API key |
 | `SERPER_API_KEY` | For search | — | Serper web search API key |
 | `OLLAMA_BASE_URL` | No | `http://localhost:11434` | Ollama server URL |
+| `AGENT_TIMEOUT_SECONDS` | No | `300` | Global default timeout per agent invocation (seconds) |
+| `AGENT_MAX_RETRIES` | No | `1` | Global retries after initial failure (`1` = one retry) |
+| `AGENT_CIRCUIT_BREAKER_THRESHOLD` | No | `3` | Open breaker after N consecutive failures |
+| `AGENT_CIRCUIT_BREAKER_COOLDOWN_SECONDS` | No | `600` | Breaker cooldown before allowing requests again |
+| `AGENT_<AGENT_NAME>_TIMEOUT_SECONDS` | No | — | Per-agent timeout override (e.g., `AGENT_PLANNER_TIMEOUT_SECONDS`) |
+| `AGENT_<AGENT_NAME>_MAX_RETRIES` | No | — | Per-agent retries override |
+| `AGENT_<AGENT_NAME>_CIRCUIT_BREAKER_THRESHOLD` | No | — | Per-agent failure threshold override |
+| `AGENT_<AGENT_NAME>_CIRCUIT_BREAKER_COOLDOWN_SECONDS` | No | — | Per-agent breaker cooldown override |
 | `LOG_LEVEL` | No | `INFO` | Logging level (DEBUG/INFO/WARNING/ERROR) |
 | `LOG_DIR` | No | `logs` | Log output directory |
 | `LOG_FILE_ENABLED` | No | `true` | Enable/disable file logging |
@@ -451,6 +473,12 @@ class State(TypedDict):
 | `SERVER_PORT` | No | `8000` | FastAPI server bind port |
 | `SERVER_DEBUG` | No | `true` | Enable uvicorn auto-reload |
 | `DEFAULT_LLM_PROVIDER` | No | `dummy` | Default provider for new web sessions |
+
+Per-agent override pattern (optional):
+
+- `AGENT_PLANNER_TIMEOUT_SECONDS=120`
+- `AGENT_ORCHESTRATOR_TIMEOUT_SECONDS=420`
+- `AGENT_PLANNER_MAX_RETRIES=2`
 
 ### Config Files
 
@@ -659,6 +687,14 @@ Enforce a layered architecture with at least two abstraction layers between majo
 - [ ] External calls have timeouts & retries
 - [ ] Business logic isolated in Service layer
 - [ ] Changing a feature should touch ≤3 files (architecture permitting)
+- [ ] Run validation before handoff: lint + errors/warnings check (`ruff`, `pyrefly`, `get_errors`, and relevant smoke run)
+- [ ] If a discovery is reusable cross-session, write it into `AGENTS.md` before ending
+
+### Agent Handoff Rule (STRICT)
+
+- Never end a coding session without checking for errors/warnings in changed files.
+- Minimum required before handoff: run targeted lint/test command(s) and run editor error check.
+- When adding/fixing architecture, explicitly decide: "session-local detail" vs "cross-session rule"; if cross-session, update `AGENTS.md` in the same task.
 
 ### Ultimate Rule
 

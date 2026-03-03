@@ -54,6 +54,11 @@ class EnvConfig:
         "OPENAI_API_KEY": None,
         "SERPER_API_KEY": None,
         "OLLAMA_BASE_URL": "http://localhost:11434",
+        # Agent runtime resilience defaults
+        "AGENT_TIMEOUT_SECONDS": "300",
+        "AGENT_MAX_RETRIES": "1",
+        "AGENT_CIRCUIT_BREAKER_THRESHOLD": "3",
+        "AGENT_CIRCUIT_BREAKER_COOLDOWN_SECONDS": "600",
         # Logging overrides (also consumed directly by Logging module,
         # listed here so they show up in the audit log)
         "LOG_LEVEL": "INFO",

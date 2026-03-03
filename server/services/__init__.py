@@ -95,7 +95,7 @@ def _random_sentiment(bias: str = "neutral") -> SentimentScore:
         pos = random.uniform(0.15, 0.55)
         neg = random.uniform(0.15, 0.55)
 
-    neu = max(0, 1.0 - pos - neg)
+    neu = max(0.0, 1.0 - pos - neg)
     compound = round(pos - neg, 4)
     return SentimentScore(
         positive=round(pos, 4),

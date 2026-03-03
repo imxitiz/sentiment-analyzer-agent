@@ -29,10 +29,13 @@ Usage::
 
 from __future__ import annotations
 
+import asyncio
+import time
 import inspect
 from abc import ABC
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any, Callable, Generator
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import StructuredTool
@@ -42,6 +45,7 @@ from langgraph.graph.state import CompiledStateGraph
 from BaseLLM import get_llm
 from BaseLLM.adapter import BaseLLMAdapter
 from Logging import context_logger
+from env import config
 
 
 class BaseAgent(ABC):
@@ -73,6 +77,10 @@ class BaseAgent(ABC):
     _system_prompt_file: str = "system.txt"
     _llm_provider: str = "google"
     _llm_model: str | None = None
+    _timeout_seconds: int | None = None
+    _max_retries: int | None = None
+    _circuit_breaker_threshold: int | None = None
+    _circuit_breaker_cooldown_seconds: int | None = None
 
     def __init__(
         self,
@@ -107,6 +115,28 @@ class BaseAgent(ABC):
         )
         self._extra_tools = extra_tools or []
         self._system_prompt_override = system_prompt
+        self._resolved_timeout_seconds = self._resolve_int_setting(
+            key_name="TIMEOUT_SECONDS",
+            explicit=self._timeout_seconds,
+            default=300,
+        )
+        self._resolved_max_retries = self._resolve_int_setting(
+            key_name="MAX_RETRIES",
+            explicit=self._max_retries,
+            default=1,
+        )
+        self._resolved_circuit_breaker_threshold = self._resolve_int_setting(
+            key_name="CIRCUIT_BREAKER_THRESHOLD",
+            explicit=self._circuit_breaker_threshold,
+            default=3,
+        )
+        self._resolved_circuit_breaker_cooldown_seconds = self._resolve_int_setting(
+            key_name="CIRCUIT_BREAKER_COOLDOWN_SECONDS",
+            explicit=self._circuit_breaker_cooldown_seconds,
+            default=600,
+        )
+        self._consecutive_failures = 0
+        self._circuit_open_until = 0.0
         self._log = context_logger(
             f"agents.{self._name}", actor=self._name, phase="AGENT",
         )
@@ -142,6 +172,10 @@ class BaseAgent(ABC):
                 "tool_count": len(all_tools),
                 "tool_names": [getattr(t, "name", str(t)) for t in all_tools],
                 "demo": self._demo,
+                "timeout_seconds": self._resolved_timeout_seconds,
+                "max_retries": self._resolved_max_retries,
+                "circuit_breaker_threshold": self._resolved_circuit_breaker_threshold,
+                "circuit_breaker_cooldown_seconds": self._resolved_circuit_breaker_cooldown_seconds,
             },
         )
 
@@ -249,11 +283,121 @@ class BaseAgent(ABC):
             "invoke  len=%d  mode=%s", len(message), self._mode,
             action="invoke",
         )
+        self._checkpoint_topic_input(message)
+        self._checkpoint_agent_status(message, status="working", mark_started=True)
 
-        # Demo mode — skip LLM entirely
         if self._demo:
-            return self._demo_invoke(message, **kwargs)
+            result = self._demo_invoke(message, **kwargs)
+            self._checkpoint_artifact(
+                topic=message,
+                artifact_type="agent_output",
+                value=result.get("output", ""),
+                meta={"mode": "demo", "call": "invoke"},
+            )
+            self._checkpoint_agent_status(
+                message,
+                status="completed",
+                retries=0,
+                mark_completed=True,
+            )
+            return result
 
+        return self._invoke_with_resilience(
+            call_name="invoke",
+            message=message,
+            core_call=self._invoke_core,
+            **kwargs,
+        )
+
+    async def ainvoke(self, message: str, **kwargs: Any) -> dict[str, Any]:
+        """Run the agent asynchronously."""
+        self._log.info(
+            "ainvoke  len=%d  mode=%s", len(message), self._mode,
+            action="ainvoke",
+        )
+        self._checkpoint_topic_input(message)
+        self._checkpoint_agent_status(message, status="working", mark_started=True)
+
+        if self._demo:
+            result = self._demo_invoke(message, **kwargs)
+            self._checkpoint_artifact(
+                topic=message,
+                artifact_type="agent_output",
+                value=result.get("output", ""),
+                meta={"mode": "demo", "call": "ainvoke"},
+            )
+            self._checkpoint_agent_status(
+                message,
+                status="completed",
+                retries=0,
+                mark_completed=True,
+            )
+            return result
+
+        return await self._ainvoke_with_resilience(
+            call_name="ainvoke",
+            message=message,
+            core_call=self._ainvoke_core,
+            **kwargs,
+        )
+
+    def stream(self, message: str, **kwargs: Any) -> Generator:
+        """Stream agent execution steps."""
+        self._checkpoint_topic_input(message)
+        self._checkpoint_agent_status(message, status="working", mark_started=True)
+        if self._demo:
+            result = self._demo_invoke(message, **kwargs)
+            self._checkpoint_artifact(
+                topic=message,
+                artifact_type="agent_output",
+                value=result.get("output", ""),
+                meta={"mode": "demo", "call": "stream"},
+            )
+            self._checkpoint_agent_status(
+                message,
+                status="completed",
+                retries=0,
+                mark_completed=True,
+            )
+            yield result
+            return
+
+        self._check_circuit_breaker()
+        start = time.monotonic()
+        if self._mode == "react" and self._graph:
+            try:
+                for step in self._graph.stream(
+                    {"messages": [{"role": "user", "content": message}]},
+                    **kwargs,
+                ):
+                    self._enforce_stream_timeout(start)
+                    yield step
+                self._on_attempt_success()
+                self._checkpoint_agent_status(
+                    message,
+                    status="completed",
+                    mark_completed=True,
+                )
+            except Exception as exc:
+                retries = self._checkpoint_increment_retry(message, error=str(exc))
+                self._checkpoint_agent_status(
+                    message,
+                    status="failed",
+                    retries=retries,
+                    last_error=str(exc),
+                    mark_completed=True,
+                )
+                raise
+        else:
+            result = self._invoke_with_resilience(
+                call_name="stream_direct",
+                message=message,
+                core_call=lambda m, **k: self._invoke_direct(m, **k),
+                **kwargs,
+            )
+            yield result
+
+    def _invoke_core(self, message: str, **kwargs: Any) -> dict[str, Any]:
         if self._mode == "react" and self._graph:
             result = self._graph.invoke(
                 {"messages": [{"role": "user", "content": message}]},
@@ -268,16 +412,7 @@ class BaseAgent(ABC):
 
         return self._invoke_direct(message, **kwargs)
 
-    async def ainvoke(self, message: str, **kwargs: Any) -> dict[str, Any]:
-        """Run the agent asynchronously."""
-        self._log.info(
-            "ainvoke  len=%d  mode=%s", len(message), self._mode,
-            action="ainvoke",
-        )
-
-        if self._demo:
-            return self._demo_invoke(message, **kwargs)
-
+    async def _ainvoke_core(self, message: str, **kwargs: Any) -> dict[str, Any]:
         if self._mode == "react" and self._graph:
             result = await self._graph.ainvoke(
                 {"messages": [{"role": "user", "content": message}]},
@@ -288,19 +423,363 @@ class BaseAgent(ABC):
 
         return self._invoke_direct(message, **kwargs)
 
-    def stream(self, message: str, **kwargs: Any) -> Generator:
-        """Stream agent execution steps."""
-        if self._demo:
-            yield self._demo_invoke(message, **kwargs)
+    def _invoke_with_resilience(
+        self,
+        *,
+        call_name: str,
+        message: str,
+        core_call: Callable[..., dict[str, Any]],
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        self._check_circuit_breaker()
+        max_attempts = self._resolved_max_retries + 1
+        last_error: Exception | None = None
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                result = self._run_with_timeout(
+                    lambda: core_call(message, **kwargs),
+                    timeout_seconds=self._resolved_timeout_seconds,
+                )
+                self._on_attempt_success()
+                self._checkpoint_agent_status(
+                    message,
+                    status="completed",
+                    retries=attempt - 1,
+                    mark_completed=True,
+                )
+                self._checkpoint_artifact(
+                    topic=message,
+                    artifact_type="agent_output",
+                    value=result.get("output", ""),
+                    meta={"attempt": attempt, "call": call_name},
+                )
+                return result
+            except Exception as exc:
+                last_error = exc
+                self._on_attempt_failure(exc)
+                retries = self._checkpoint_increment_retry(message, error=str(exc))
+                self._checkpoint_agent_status(
+                    message,
+                    status="retrying" if attempt < max_attempts else "failed",
+                    retries=retries,
+                    last_error=str(exc),
+                    mark_completed=attempt >= max_attempts,
+                )
+                self._checkpoint_artifact(
+                    topic=message,
+                    artifact_type="agent_attempt_error",
+                    value=str(exc),
+                    meta={"attempt": attempt, "call": call_name},
+                )
+                if attempt >= max_attempts:
+                    break
+                self._log.warning(
+                    "%s retrying  attempt=%d/%d",
+                    call_name,
+                    attempt + 1,
+                    max_attempts,
+                    action="agent_retry",
+                    reason=type(exc).__name__,
+                    meta={
+                        "attempt": attempt,
+                        "max_attempts": max_attempts,
+                        "timeout_seconds": self._resolved_timeout_seconds,
+                    },
+                )
+
+        assert last_error is not None
+        raise RuntimeError(
+            f"{self._name} failed after {max_attempts} attempts: {last_error}"
+        ) from last_error
+
+    async def _ainvoke_with_resilience(
+        self,
+        *,
+        call_name: str,
+        message: str,
+        core_call: Callable[..., Any],
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        self._check_circuit_breaker()
+        max_attempts = self._resolved_max_retries + 1
+        last_error: Exception | None = None
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                result = await asyncio.wait_for(
+                    core_call(message, **kwargs),
+                    timeout=self._resolved_timeout_seconds,
+                )
+                self._on_attempt_success()
+                self._checkpoint_agent_status(
+                    message,
+                    status="completed",
+                    retries=attempt - 1,
+                    mark_completed=True,
+                )
+                self._checkpoint_artifact(
+                    topic=message,
+                    artifact_type="agent_output",
+                    value=result.get("output", ""),
+                    meta={"attempt": attempt, "call": call_name},
+                )
+                return result
+            except Exception as exc:
+                last_error = exc
+                self._on_attempt_failure(exc)
+                retries = self._checkpoint_increment_retry(message, error=str(exc))
+                self._checkpoint_agent_status(
+                    message,
+                    status="retrying" if attempt < max_attempts else "failed",
+                    retries=retries,
+                    last_error=str(exc),
+                    mark_completed=attempt >= max_attempts,
+                )
+                self._checkpoint_artifact(
+                    topic=message,
+                    artifact_type="agent_attempt_error",
+                    value=str(exc),
+                    meta={"attempt": attempt, "call": call_name},
+                )
+                if attempt >= max_attempts:
+                    break
+                self._log.warning(
+                    "%s retrying  attempt=%d/%d",
+                    call_name,
+                    attempt + 1,
+                    max_attempts,
+                    action="agent_retry",
+                    reason=type(exc).__name__,
+                    meta={
+                        "attempt": attempt,
+                        "max_attempts": max_attempts,
+                        "timeout_seconds": self._resolved_timeout_seconds,
+                    },
+                )
+
+        assert last_error is not None
+        raise RuntimeError(
+            f"{self._name} failed after {max_attempts} attempts: {last_error}"
+        ) from last_error
+
+    @staticmethod
+    def _run_with_timeout(
+        fn: Callable[[], dict[str, Any]],
+        *,
+        timeout_seconds: int,
+    ) -> dict[str, Any]:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(fn)
+            try:
+                return future.result(timeout=timeout_seconds)
+            except FutureTimeoutError as exc:
+                future.cancel()
+                raise TimeoutError(
+                    f"Agent call timed out after {timeout_seconds}s"
+                ) from exc
+
+    def _check_circuit_breaker(self) -> None:
+        if self._circuit_open_until <= 0:
             return
 
-        if self._mode == "react" and self._graph:
-            yield from self._graph.stream(
-                {"messages": [{"role": "user", "content": message}]},
-                **kwargs,
+        now = time.monotonic()
+        if now >= self._circuit_open_until:
+            self._circuit_open_until = 0.0
+            self._consecutive_failures = 0
+            self._log.info(
+                "Circuit breaker reset",
+                action="circuit_breaker_reset",
             )
-        else:
-            yield self._invoke_direct(message, **kwargs)
+            return
+
+        remaining = int(self._circuit_open_until - now)
+        raise RuntimeError(
+            f"Circuit breaker open for agent '{self._name}'. "
+            f"Retry after {remaining}s."
+        )
+
+    def _on_attempt_success(self) -> None:
+        if self._consecutive_failures > 0:
+            self._log.info(
+                "Agent recovered after failures",
+                action="agent_recovered",
+                meta={"failures_before_success": self._consecutive_failures},
+            )
+        self._consecutive_failures = 0
+        self._circuit_open_until = 0.0
+
+    def _on_attempt_failure(self, exc: Exception) -> None:
+        self._consecutive_failures += 1
+        should_open = self._consecutive_failures >= self._resolved_circuit_breaker_threshold
+
+        if should_open:
+            self._circuit_open_until = time.monotonic() + self._resolved_circuit_breaker_cooldown_seconds
+            self._log.error(
+                "Circuit breaker opened",
+                action="circuit_breaker_open",
+                reason=type(exc).__name__,
+                meta={
+                    "consecutive_failures": self._consecutive_failures,
+                    "threshold": self._resolved_circuit_breaker_threshold,
+                    "cooldown_seconds": self._resolved_circuit_breaker_cooldown_seconds,
+                },
+            )
+            return
+
+        self._log.warning(
+            "Agent attempt failed",
+            action="agent_attempt_failed",
+            reason=type(exc).__name__,
+            meta={
+                "consecutive_failures": self._consecutive_failures,
+                "threshold": self._resolved_circuit_breaker_threshold,
+            },
+        )
+
+    def _enforce_stream_timeout(self, started_at: float) -> None:
+        elapsed = time.monotonic() - started_at
+        if elapsed <= self._resolved_timeout_seconds:
+            return
+        exc = TimeoutError(
+            f"Stream timed out after {self._resolved_timeout_seconds}s"
+        )
+        self._on_attempt_failure(exc)
+        raise exc
+
+    def _resolve_int_setting(
+        self,
+        *,
+        key_name: str,
+        explicit: int | None,
+        default: int,
+    ) -> int:
+        if explicit is not None:
+            return max(1, int(explicit))
+
+        specific_key = f"AGENT_{self._name.upper()}_{key_name}"
+        shared_key = f"AGENT_{key_name}"
+
+        raw_specific = config.get(specific_key)
+        if raw_specific:
+            return self._parse_int(raw_specific, default=default)
+
+        raw_shared = config.get(shared_key)
+        if raw_shared:
+            return self._parse_int(raw_shared, default=default)
+
+        return default
+
+    @staticmethod
+    def _parse_int(value: str, *, default: int) -> int:
+        try:
+            return max(1, int(value))
+        except (TypeError, ValueError):
+            return default
+
+    def _checkpoint_topic_input(self, message: str) -> None:
+        topic = message.strip()
+        if not topic:
+            return
+
+        try:
+            from agents.services import save_topic_input
+
+            save_topic_input(
+                topic,
+                topic,
+                input_type="agent_input",
+                source_agent=self._name,
+            )
+        except Exception as exc:
+            self._log.warning(
+                "Checkpoint topic input failed: %s",
+                exc,
+                action="checkpoint_warn",
+            )
+
+    def _checkpoint_artifact(
+        self,
+        *,
+        topic: str,
+        artifact_type: str,
+        value: str,
+        meta: dict[str, Any] | None = None,
+    ) -> None:
+        normalized_topic = topic.strip()
+        if not normalized_topic:
+            return
+
+        try:
+            from agents.services import save_pipeline_artifact
+
+            save_pipeline_artifact(
+                normalized_topic,
+                source_agent=self._name,
+                artifact_type=artifact_type,
+                value=value[:20000],
+                meta=meta,
+            )
+        except Exception as exc:
+            self._log.warning(
+                "Checkpoint artifact failed: %s",
+                exc,
+                action="checkpoint_warn",
+            )
+
+    def _checkpoint_agent_status(
+        self,
+        topic: str,
+        *,
+        status: str,
+        retries: int | None = None,
+        last_error: str | None = None,
+        mark_started: bool = False,
+        mark_completed: bool = False,
+    ) -> None:
+        normalized_topic = topic.strip()
+        if not normalized_topic:
+            return
+
+        try:
+            from agents.services import upsert_agent_status
+
+            upsert_agent_status(
+                normalized_topic,
+                agent_name=self._name,
+                status=status,
+                retries=retries,
+                last_error=last_error,
+                mark_started=mark_started,
+                mark_completed=mark_completed,
+            )
+        except Exception as exc:
+            self._log.warning(
+                "Checkpoint agent status failed: %s",
+                exc,
+                action="checkpoint_warn",
+            )
+
+    def _checkpoint_increment_retry(self, topic: str, *, error: str) -> int:
+        normalized_topic = topic.strip()
+        if not normalized_topic:
+            return 0
+
+        try:
+            from agents.services import increment_agent_retry
+
+            return increment_agent_retry(
+                normalized_topic,
+                agent_name=self._name,
+                error=error,
+            )
+        except Exception as exc:
+            self._log.warning(
+                "Checkpoint retry increment failed: %s",
+                exc,
+                action="checkpoint_warn",
+            )
+            return 0
 
     def _invoke_direct(self, message: str, **kwargs: Any) -> dict[str, Any]:
         """Direct LLM call with system prompt (no tool loop)."""

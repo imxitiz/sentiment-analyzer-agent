@@ -33,12 +33,20 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from langchain.agents import create_agent
 from pydantic import BaseModel, Field
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from agents.base import BaseAgent
 from agents._registry import register_agent
+from agents.services import (
+    init_topic_db,
+    save_pipeline_artifact,
+    save_planner_plan,
+    save_topic_input,
+)
+from agents.tools.search import google_search_snippets
 from Logging import get_logger
 
 logger = get_logger("agents.planner")
@@ -118,14 +126,51 @@ class PlannerAgent(BaseAgent):
             "Planning for topic  len=%d", len(message),
             action="plan", meta={"topic_preview": message[:100]},
         )
+        topic = message.strip()
+        init_topic_db(topic)
+        save_topic_input(
+            topic,
+            topic,
+            input_type="topic",
+            source_agent="planner",
+        )
 
-        # Demo mode — skip LLM entirely
         if self._demo:
-            return self._demo_invoke(message, **kwargs)
+            result = self._demo_invoke(message, **kwargs)
+            plan = result.get("plan")
+            if plan is not None:
+                save_planner_plan(
+                    topic,
+                    plan=plan,
+                    raw_output=result.get("output", ""),
+                    source_agent=self._name,
+                )
+            else:
+                save_pipeline_artifact(
+                    topic,
+                    source_agent=self._name,
+                    artifact_type="planner_demo_output",
+                    value=result.get("output", ""),
+                )
+            return result
+
+        web_context = self._gather_web_context(topic)
+        if web_context:
+            save_pipeline_artifact(
+                topic,
+                source_agent=self._name,
+                artifact_type="planner_web_context",
+                value=web_context,
+            )
 
         messages = [
             SystemMessage(content=self._system_prompt),
-            HumanMessage(content=f"Create a research plan for: {message}"),
+            HumanMessage(
+                content=(
+                    f"Create a research plan for: {message}\n\n"
+                    f"Web context (from tool-based search):\n{web_context}"
+                )
+            ),
         ]
 
         # Try structured output first
@@ -143,6 +188,12 @@ class PlannerAgent(BaseAgent):
                     "query_count": len(plan.search_queries),
                 },
             )
+            save_planner_plan(
+                topic,
+                plan=plan,
+                raw_output=output,
+                source_agent=self._name,
+            )
             return {
                 "messages": messages,
                 "output": output,
@@ -154,10 +205,22 @@ class PlannerAgent(BaseAgent):
                 "Structured output failed, falling back to text: %s", exc,
                 action="plan_fallback",
             )
+            save_pipeline_artifact(
+                topic,
+                source_agent=self._name,
+                artifact_type="planner_structured_error",
+                value=str(exc),
+            )
 
         # Fallback: plain text response
         result = self._invoke_direct(message, **kwargs)
         self._log.success("Plan generated (text fallback)", action="plan")
+        save_pipeline_artifact(
+            topic,
+            source_agent=self._name,
+            artifact_type="planner_text_output",
+            value=result.get("output", ""),
+        )
         return result
 
     def _invoke_structured(self, messages: list) -> ResearchPlan:
@@ -170,6 +233,43 @@ class PlannerAgent(BaseAgent):
             return result
         # Handle dict response from some providers
         return ResearchPlan.model_validate(result)
+
+    def _gather_web_context(self, topic: str) -> str:
+        """Use tool-calling loop so planner can fetch search snippets."""
+        try:
+            research_agent = create_agent(
+                self._llm_adapter.chat_model,
+                tools=[google_search_snippets],
+                system_prompt=(
+                    "You are a research assistant for a planning agent. "
+                    "Use the google_search_snippets tool at least once, then "
+                    "return concise bullet points of trends, vocabulary, "
+                    "and likely hashtags for the topic."
+                ),
+                name="planner_research",
+            )
+            result = research_agent.invoke(
+                {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": (
+                                f"Topic: {topic}. Gather quick web context using the tool. "
+                                "Return compact bullets with no markdown tables."
+                            ),
+                        }
+                    ]
+                }
+            )
+            return self._extract_last_message(result)
+        except Exception as exc:
+            self._log.warning(
+                "Web context gathering failed: %s",
+                exc,
+                action="plan_web_context",
+                reason=type(exc).__name__,
+            )
+            return ""
 
     # ── Demo mode ────────────────────────────────────────────────────
 

@@ -22,6 +22,7 @@ from ._registry import (
     list_tools,
     list_categories,
 )
+from .search import google_search_snippets
 
 __all__ = [
     "ToolEntry",
@@ -32,4 +33,5 @@ __all__ = [
     "get_tools_by_category",
     "list_tools",
     "list_categories",
+    "google_search_snippets",
 ]

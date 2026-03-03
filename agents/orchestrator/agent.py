@@ -36,6 +36,11 @@ from typing import Any
 
 from agents.base import BaseAgent
 from agents._registry import register_agent
+from agents.services import (
+    bootstrap_topic,
+    record_orchestrator_event,
+    update_topic_run,
+)
 
 
 @register_agent
@@ -92,6 +97,49 @@ class OrchestratorAgent(BaseAgent):
         tools.append(ask_human)
 
         return tools
+
+    def invoke(self, message: str, **kwargs: Any) -> dict[str, Any]:
+        """Bootstrap topic DB + orchestrator DB before running pipeline."""
+        topic = message.strip()
+        run = bootstrap_topic(topic)
+        run_id = run["run_id"]
+        update_topic_run(
+            run_id,
+            status="running",
+            active_agent=self._name,
+            meta={"mode": self.mode},
+        )
+
+        try:
+            result = super().invoke(message, **kwargs)
+            update_topic_run(
+                run_id,
+                status="completed",
+                active_agent=self._name,
+            )
+            record_orchestrator_event(
+                run_id,
+                event_type="pipeline_complete",
+                agent=self._name,
+                status="completed",
+                message="Orchestrator completed successfully",
+            )
+            return result
+        except Exception as exc:
+            update_topic_run(
+                run_id,
+                status="failed",
+                active_agent=self._name,
+                error=str(exc),
+            )
+            record_orchestrator_event(
+                run_id,
+                event_type="pipeline_error",
+                agent=self._name,
+                status="failed",
+                message=str(exc),
+            )
+            raise
 
     # ── Demo mode ────────────────────────────────────────────────────
 
