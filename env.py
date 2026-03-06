@@ -53,12 +53,29 @@ class EnvConfig:
         "GOOGLE_API_KEY": None,
         "OPENAI_API_KEY": None,
         "SERPER_API_KEY": None,
+        "FIRECRAWL_API_KEY": None,
+        "CRAWLBASE_TOKEN": None,
+        "CRAWLBASE_JS_TOKEN": None,
         "OLLAMA_BASE_URL": "http://localhost:11434",
         # Agent runtime resilience defaults
         "AGENT_TIMEOUT_SECONDS": "300",
         "AGENT_MAX_RETRIES": "1",
         "AGENT_CIRCUIT_BREAKER_THRESHOLD": "3",
         "AGENT_CIRCUIT_BREAKER_COOLDOWN_SECONDS": "600",
+        # Harvester controls
+        "HARVESTER_MAX_LINKS": "1000",
+        "HARVESTER_MAX_CONCURRENCY": "8",
+        "HARVESTER_SOURCE_TIMEOUT_SECONDS": "120",
+        "HARVESTER_WRITER_BATCH_SIZE": "50",
+        "HARVESTER_QUEUE_SIZE": "5000",
+        "HARVESTER_PER_QUERY_LIMIT": "25",
+        "HARVESTER_MIN_QUALITY_SCORE": "0.35",
+        "HARVESTER_EXPANSION_SEED_LIMIT": "12",
+        "HARVESTER_EXPANSION_PER_SEED_LIMIT": "25",
+        "HARVESTER_ENABLE_SERPER": "true",
+        "HARVESTER_ENABLE_FIRECRAWL": "true",
+        "HARVESTER_ENABLE_BROWSER_DISCOVERY": "true",
+        "HARVESTER_ENABLE_CRAWLBASE": "true",
         # Logging overrides (also consumed directly by Logging module,
         # listed here so they show up in the audit log)
         "LOG_LEVEL": "INFO",
@@ -71,6 +88,9 @@ class EnvConfig:
         "GOOGLE_API_KEY",
         "OPENAI_API_KEY",
         "SERPER_API_KEY",
+        "FIRECRAWL_API_KEY",
+        "CRAWLBASE_TOKEN",
+        "CRAWLBASE_JS_TOKEN",
     })
 
     def __init__(self) -> None:

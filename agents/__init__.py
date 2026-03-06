@@ -9,6 +9,7 @@ Public API::
         BaseAgent,
         # Concrete agents
         OrchestratorAgent,
+        HarvesterAgent,
         PlannerAgent, ResearchPlan,
     )
 
@@ -28,6 +29,7 @@ from ._registry import (
 
 # Import concrete agents to trigger @register_agent decorators
 from .orchestrator import OrchestratorAgent
+from .harvester import HarvesterAgent, HarvestPlan, HarvestTaskPlan
 from .planner import PlannerAgent, ResearchPlan
 
 __all__ = [
@@ -41,6 +43,9 @@ __all__ = [
     "is_registered",
     # Agents
     "OrchestratorAgent",
+    "HarvesterAgent",
+    "HarvestPlan",
+    "HarvestTaskPlan",
     "PlannerAgent",
     "ResearchPlan",
 ]

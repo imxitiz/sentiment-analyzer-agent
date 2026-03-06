@@ -132,12 +132,18 @@ Pipeline flow:  Plan → Search → Scrape → Clean → Analyze → Summarize
 | `agents/services/` | Shared service layer for per-topic SQLite checkpoints |
 | `agents/services/planner_checkpoint.py` | Topic DB init + append-only persistence (`topic_inputs`, `pipeline_artifacts`) |
 | `agents/services/orchestrator_checkpoint.py` | Central orchestrator DB (`topic_runs`, `orchestrator_events`) + topic bootstrap |
+| `agents/services/harvester_store.py` | Harvester SQLite schema, URL normalization, quality scoring, and async writer queue |
+| `agents/services/harvester_sources.py` | Search providers and browser expansion runtime (Serper, Firecrawl, Crawlbase) |
 | `agents/tools/_registry.py` | `@agent_tool` decorator, tool catalog with categories |
 | `agents/tools/human.py` | Human-in-the-loop tool (CLI input, swappable backend) |
 | `agents/tools/search.py` | Tool: `google_search_snippets` (Serper API top results for planner context) |
+| `agents/tools/harvest.py` | Reusable harvest tools for Firecrawl search/browser and Crawlbase page fetch |
 | `utils/serper.py` | Central Serper adapter utility (real API + demo fallback payload) |
+| `utils/firecrawl.py` | Central Firecrawl REST adapter (search, scrape, browser sessions) |
+| `utils/crawlbase.py` | Central Crawlbase adapter for rendered page fetches |
 | `agents/orchestrator/` | Orchestrator agent — coordinates sub-agents via tool delegation |
 | `agents/planner/` | Planner agent — generates `ResearchPlan` (keywords, hashtags, queries) |
+| `agents/harvester/` | Harvester agent — builds `HarvestPlan`, fans out sources, and stores deduplicated links |
 | `agents/<name>/prompts/` | Agent-local prompt templates (`system.txt`, etc.) |
 | `BaseLLM/` | Unified LLM abstraction layer (Gemini, Ollama, OpenAI, Dummy) |
 | `BaseLLM/adapter.py` | `BaseLLMAdapter` ABC — DRY base with sync/async generate |
@@ -215,6 +221,9 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 - **Topic DB bootstrap is now orchestrator-owned**: when topic is received, orchestrator first writes to central `orchestrator.db` (`topic_runs`) and initializes topic DB before planner invocation.
 - **Agent lifecycle status is checkpointed in topic DB**: `agent_status` table tracks `working/retrying/completed/failed`, retry count, last error, and timestamps for resume/debug.
 - **Planner can do tool-based web grounding**: planner runs a tool-calling context pass via `google_search_snippets` (Serper) before producing the structured `ResearchPlan`.
+- **Harvester persistence now uses a two-layer model**: `discovered_links` stores canonical deduplicated URLs, while `link_observations` stores every raw observation from every source. Deduplication happens in the async writer, not in source code.
+- **Harvester writes must go through `AsyncLinkWriter`**: collectors stay fully concurrent, but SQLite writes are serialized through one queue consumer to avoid cross-task write races and to centralize duplicate/quality decisions.
+- **Browser discovery is provider-backed, not local-browser-coupled**: Firecrawl browser sessions are used for rendered search-page link discovery, and Crawlbase is used for seed-page expansion. This keeps browser tech replaceable.
 - **External provider code must be centralized**: keep API-specific logic (Serper, future providers) in `utils/` adapter files and call them from tools/services. Avoid direct HTTP integration scattered across agents.
 
 ### Common Pitfalls to Avoid
@@ -239,6 +248,7 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 | **Multi-agent framework** (BaseAgent, registries) | Browser-based scraping (Playwright) |
 | **OrchestratorAgent** (react mode, sub-agent delegation) | Evaluation suite |
 | **PlannerAgent** (structured output → ResearchPlan) | Searcher/Harvester agent |
+| **HarvesterAgent** (structured output → `HarvestPlan`, async fan-out, queued SQLite writes) | Scraper agent |
 | **Agent resilience runtime** (timeout + retry + circuit breaker in `BaseAgent`) | Scraper agent |
 | **Planner checkpoint persistence** (topic SQLite DB with `topic_inputs` + `pipeline_artifacts`) | Summarizer agent |
 | **Tool registry** (@agent_tool, categories) | Scraper agent |
@@ -454,6 +464,9 @@ class State(TypedDict):
 | `GOOGLE_API_KEY` | For Gemini | — | Google Gemini API key |
 | `OPENAI_API_KEY` | For OpenAI | — | OpenAI/ChatGPT API key |
 | `SERPER_API_KEY` | For search | — | Serper web search API key |
+| `FIRECRAWL_API_KEY` | No | — | Firecrawl API key for search, scrape, and remote browser sessions |
+| `CRAWLBASE_TOKEN` | No | — | Crawlbase standard crawling token |
+| `CRAWLBASE_JS_TOKEN` | No | — | Crawlbase JavaScript crawling token for rendered pages |
 | `OLLAMA_BASE_URL` | No | `http://localhost:11434` | Ollama server URL |
 | `AGENT_TIMEOUT_SECONDS` | No | `300` | Global default timeout per agent invocation (seconds) |
 | `AGENT_MAX_RETRIES` | No | `1` | Global retries after initial failure (`1` = one retry) |
@@ -463,6 +476,19 @@ class State(TypedDict):
 | `AGENT_<AGENT_NAME>_MAX_RETRIES` | No | — | Per-agent retries override |
 | `AGENT_<AGENT_NAME>_CIRCUIT_BREAKER_THRESHOLD` | No | — | Per-agent failure threshold override |
 | `AGENT_<AGENT_NAME>_CIRCUIT_BREAKER_COOLDOWN_SECONDS` | No | — | Per-agent breaker cooldown override |
+| `HARVESTER_MAX_LINKS` | No | `1000` | Upper bound of accepted canonical links stored for a topic |
+| `HARVESTER_MAX_CONCURRENCY` | No | `8` | Maximum concurrent harvesting tasks across sources |
+| `HARVESTER_SOURCE_TIMEOUT_SECONDS` | No | `120` | Per-source timeout for query execution and expansion |
+| `HARVESTER_WRITER_BATCH_SIZE` | No | `50` | SQLite writer queue flush size |
+| `HARVESTER_QUEUE_SIZE` | No | `5000` | In-memory queue capacity before producers backpressure |
+| `HARVESTER_PER_QUERY_LIMIT` | No | `25` | Target raw results per query per source |
+| `HARVESTER_MIN_QUALITY_SCORE` | No | `0.35` | Minimum score before a canonical link is accepted |
+| `HARVESTER_EXPANSION_SEED_LIMIT` | No | `12` | Maximum seed URLs expanded after initial search collection |
+| `HARVESTER_EXPANSION_PER_SEED_LIMIT` | No | `25` | Maximum outbound links collected from each expanded seed |
+| `HARVESTER_ENABLE_SERPER` | No | `true` | Enable Serper query collection |
+| `HARVESTER_ENABLE_FIRECRAWL` | No | `true` | Enable Firecrawl search collection |
+| `HARVESTER_ENABLE_BROWSER_DISCOVERY` | No | `true` | Enable Firecrawl remote-browser discovery on rendered search pages |
+| `HARVESTER_ENABLE_CRAWLBASE` | No | `true` | Enable Crawlbase page expansion from high-quality seed URLs |
 | `LOG_LEVEL` | No | `INFO` | Logging level (DEBUG/INFO/WARNING/ERROR) |
 | `LOG_DIR` | No | `logs` | Log output directory |
 | `LOG_FILE_ENABLED` | No | `true` | Enable/disable file logging |
@@ -510,10 +536,11 @@ Per-agent override pattern (optional):
 5. `prepare_db_for_topic("test")` creates SQLite DB at `data/scrapes/test.db`
 6. `uv run python main.py --demo -t "test"` runs full pipeline with static data (exit 0)
 7. `OrchestratorAgent(llm_provider="dummy").invoke("test")` returns structured output with planner data
-8. `list_agents()` returns `["orchestrator", "planner"]` — all agents registered
-9. `curl http://localhost:8000/api/health` returns `{"status":"ok"}` — backend server smoke test
-10. Create session → start analysis → check WebSocket events stream correctly
-11. `cd Interface && bun build src/frontend.tsx --outdir=dist` compiles 608 modules without errors
+8. `list_agents()` returns `["harvester", "orchestrator", "planner"]` — all agents registered
+9. `HarvesterAgent(llm_provider="dummy").invoke("test")` writes canonical links plus observations into `data/scrapes/test.db`
+10. `curl http://localhost:8000/api/health` returns `{"status":"ok"}` — backend server smoke test
+11. Create session → start analysis → check WebSocket events stream correctly
+12. `cd Interface && bun build src/frontend.tsx --outdir=dist` compiles 608 modules without errors
 
 ---
 
@@ -736,11 +763,11 @@ Prioritized roadmap. Each item is a meaningful chunk of work (1-2 sessions).
    - Demo mode with static data (no LLM needed)
    - `uv run python main.py --demo -t "any topic"` works end-to-end
 
-2. **Build Searcher/Harvester agent** (next priority)
-   - Discovers links via Serper API, saves to SQLite
-   - Takes the PlannerAgent's `ResearchPlan` as input
-   - Uses search queries and keywords from the plan
-   - Wire as sub-agent of Orchestrator (auto-becomes a tool)
+2. ~~**Build Searcher/Harvester agent**~~ ✅ DONE
+   - `HarvesterAgent` builds a `HarvestPlan` from planner artifacts and runtime config
+   - Search fan-out supports Serper plus Firecrawl search, with optional Firecrawl browser discovery
+   - `AsyncLinkWriter` serializes SQLite writes and stores both canonical links and raw observations
+   - Crawlbase expansion follows high-quality seed URLs for additional link discovery
 
 3. **Add HuggingFace sentiment model**
    - NOT an LLM — dedicated classification model (e.g., `distilroberta-base` fine-tuned for sentiment)

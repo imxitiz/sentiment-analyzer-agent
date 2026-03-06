@@ -183,21 +183,22 @@ This is **not** a single linear script. It's an **agentic mesh** with specialize
 | `Logging/` | **Done** | Production structured logger. JSON files (rotating 10MB), ANSI console, ring buffer (1000 entries), context loggers, `subscribe()` for live streaming. |
 | `env.py` | **Done** | `EnvConfig` singleton. Audited env var access, secret masking, startup audit. Never use `os.getenv()` directly. |
 | `prompts/` | **Done** | Template manager. `plan.txt`, `scrape.txt`, `clean.txt`, `summarize.txt`. `str.format()` placeholders. |
-| `DataScraper/` | **Partial** | Serper web search, Reddit/Facebook scrapers (lightweight, via Serper). SQLite storage helpers. |
+| `agents/` | **Partial** | Multi-agent runtime with Orchestrator, Planner, and Harvester agents; tool registry; demo/live-safe checkpointing; timeout/retry/circuit breaker controls. |
+| `HarvesterAgent` | **Done** | Phase 2 link harvesting: structured harvest planning, async multi-source fan-out, queued SQLite writes, deduplicated canonical links, and append-only observation logs. |
+| `DataScraper/` | **Partial** | Placeholder area for later deep-scrape connectors. Phase 2 link harvesting now lives in the agent/service layer instead. |
 
 ### In Progress / Scaffolded
 
 | Module | Status | What it does |
 | --- | --- | --- |
-| `agents.old/` | **Scaffold** | OrchestratorAgent + LangGraph workflow. Works but being rebuilt into proper multi-agent system. |
-| `Interface/` | **Scaffold** | Bun + React + Tailwind. Basic API routes (`/api/hello`, `/api/chat`). No dashboard yet. |
-| `main.py` | **Working** | CLI entry point. Runs LangGraph workflow or falls back to simple orchestrator. |
+| `server/` | **Working** | FastAPI backend with session CRUD, WebSocket streaming, export/compare APIs, mock-data pipeline runner, and dashboard support. |
+| `Interface/` | **Working** | Bun + React dashboard with chat, analysis views, charts, filters, exports, and comparison UI. |
+| `main.py` | **Working** | CLI entry point that now boots planner + harvester under the orchestrator. |
 
 ### Not Yet Started
 
 | Module | Target |
 | --- | --- |
-| Proper multi-agent LangGraph pipeline | `agents/` (new, replacing `agents.old/`) |
 | Sentiment model integration | HuggingFace DistilRoBERTa or similar |
 | Data cleaning agent/pipeline | Dedup, spam filter, normalization |
 | MongoDB integration | Raw scraped data storage |

@@ -57,6 +57,7 @@ def main() -> None:
     model = None if args.demo else args.model
 
     from agents.orchestrator import OrchestratorAgent
+    from agents.harvester import HarvesterAgent
     from agents.planner import PlannerAgent
 
     if args.demo:
@@ -65,10 +66,11 @@ def main() -> None:
 
     # Create sub-agents (cheap model for planning)
     planner = PlannerAgent(llm_provider=provider)
+    harvester = HarvesterAgent(llm_provider=provider)
 
     # Create orchestrator (powerful model for coordination)
     orchestrator = OrchestratorAgent(
-        sub_agents=[planner],
+        sub_agents=[planner, harvester],
         llm_provider=provider,
         model=model,
     )

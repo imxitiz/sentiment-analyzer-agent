@@ -75,11 +75,16 @@ class OrchestratorAgent(BaseAgent):
             **kwargs: Forwarded to ``BaseAgent.__init__``.
         """
         if sub_agents is None:
+            from agents.harvester.agent import HarvesterAgent
             from agents.planner.agent import PlannerAgent
-            sub_agents = [PlannerAgent(**{
+            forwarded = {
                 k: v for k, v in kwargs.items()
                 if k in ("llm_provider",)
-            })]
+            }
+            sub_agents = [
+                PlannerAgent(**forwarded),
+                HarvesterAgent(**forwarded),
+            ]
 
         self._sub_agents = sub_agents
         super().__init__(**kwargs)

@@ -22,11 +22,19 @@ from ._registry import (
     list_tools,
     list_categories,
 )
+from .harvest import (
+    crawlbase_fetch_page,
+    firecrawl_browser_collect_links,
+    firecrawl_search_results,
+)
 from .search import google_search_snippets
 
 __all__ = [
     "ToolEntry",
     "agent_tool",
+    "crawlbase_fetch_page",
+    "firecrawl_browser_collect_links",
+    "firecrawl_search_results",
     "register_tool",
     "get_tool",
     "get_tool_info",
