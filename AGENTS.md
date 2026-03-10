@@ -87,8 +87,10 @@ cd Interface && bun run check
 │   ┌───────────────────────────────────────────────────────────┐    │
 │   │  OrchestratorAgent (react mode — has tools)               │    │
 │   │    ├─ delegate_to_planner → PlannerAgent (direct mode)    │    │
+│   │    ├─ delegate_to_harvester → HarvesterAgent              │    │
+│   │    ├─ delegate_to_scraper → ScraperAgent (async workers)  │    │
 │   │    ├─ ask_human → Human-in-the-loop tool                  │    │
-│   │    └─ (future: delegate_to_searcher, scraper, …)          │    │
+│   │    └─ (future: cleaner, analysis, dashboard, …)                    │    │
 │   └───────────────────────────────────────────────────────────┘    │
 │    BaseAgent → _registry → tools/_registry                         │
 │    Demo mode: provider="dummy" → static data, no LLM needed       │
@@ -134,6 +136,9 @@ Pipeline flow:  Plan → Search → Scrape → Clean → Analyze → Summarize
 | `agents/services/orchestrator_checkpoint.py` | Central orchestrator DB (`topic_runs`, `orchestrator_events`) + topic bootstrap |
 | `agents/services/harvester_store.py` | Harvester SQLite schema, URL normalization, quality scoring, and async writer queue |
 | `agents/services/harvester_sources.py` | Search providers and browser expansion runtime (Serper, SerpAPI, Firecrawl, Camoufox, Crawlbase) |
+| `agents/services/scraper_store.py` | Scraper SQLite queue state: bootstrap targets from harvester links, track scrape status |
+| `agents/services/scraper_sources.py` | Scraping backends: generic HTTP + platform-specialized paths (Reddit, Bluesky, YouTube, Hacker News, RSS) + rendered fallbacks (Firecrawl, Crawlbase, Camoufox) |
+| `agents/services/document_store.py` | MongoDB document store abstraction (ABC + Mongo impl) for scraped raw documents |
 | `agents/tools/_registry.py` | `@agent_tool` decorator, tool catalog with categories |
 | `agents/tools/human.py` | Human-in-the-loop tool (CLI input, swappable backend, web clarification bridge) |
 | `agents/tools/browser.py` | Agent-facing Camoufox browser session tools (open/navigate/click/type/extract/evaluate/close) |
@@ -144,9 +149,17 @@ Pipeline flow:  Plan → Search → Scrape → Clean → Analyze → Summarize
 | `utils/serpapi.py` | Lightweight SerpAPI search adapter |
 | `utils/camoufox.py` | Flexible Camoufox integration: remote server, local Python API, or CLI wrapper |
 | `utils/crawlbase.py` | Central Crawlbase adapter for rendered page fetches |
+| `utils/bluesky.py` | Bluesky public API adapter (`resolveHandle` + `getPostThread`) |
+| `utils/youtube.py` | YouTube oEmbed metadata adapter |
+| `utils/hackernews.py` | Hacker News Firebase item API adapter |
+| `utils/rss.py` | RSS/Atom feed fetch + parser adapter |
+| `utils/mongodb.py` | MongoDB connection abstraction layer (lazy singleton, collection helpers, indexes) |
 | `agents/orchestrator/` | Orchestrator agent — coordinates sub-agents via tool delegation |
 | `agents/planner/` | Planner agent — generates `ResearchPlan` (keywords, hashtags, queries) |
 | `agents/harvester/` | Harvester agent — builds `HarvestPlan`, fans out sources, and stores deduplicated links |
+| `agents/scraper/` | **Scraper agent** — deep extraction from harvested URLs via multi-backend pipeline |
+| `agents/scraper/models.py` | `ScrapeTarget`, `ScrapedContent`, `ScrapeRuntimeConfig`, `RecoveryPlan` |
+| `agents/scraper/recovery.py` | Recovery sub-agent — AI-assisted backend fallback selection on scrape failures |
 | `agents/<name>/prompts/` | Agent-local prompt templates (`system.txt`, etc.) |
 | `BaseLLM/` | Unified LLM abstraction layer (Gemini, Ollama, OpenAI, Dummy) |
 | `BaseLLM/adapter.py` | `BaseLLMAdapter` ABC — DRY base with sync/async generate |
@@ -197,7 +210,7 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 
 ### Codebase Patterns & Shortcuts
 
-- **To test the entire pipeline end-to-end**: `uv run python main.py --demo -t "any topic"` — runs orchestrator → planner with static data, no API keys needed.
+- **To test the current implemented pipeline end-to-end**: `uv run python main.py --demo -t "any topic"` — runs orchestrator → planner → harvester → scraper with static fallbacks, no API keys needed.
 - **To test the entire BaseLLM chain**: `get_llm("dummy").generate("test")` → returns `[DUMMY-LLM] test`. No API keys needed.
 - **The `python` command may not work** on some setups — use `python3` explicitly if `python` produces no output.
 - **`BaseLLM/_registry.py`** is the single source of truth for all model names, providers, and aliases. If you need to add a model, start there.
@@ -235,6 +248,18 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 - **Harvester writes must go through `AsyncLinkWriter`**: collectors stay fully concurrent, but SQLite writes are serialized through one queue consumer to avoid cross-task write races and to centralize duplicate/quality decisions.
 - **Browser discovery is provider-backed, not local-browser-coupled**: Firecrawl browser sessions are used for rendered search-page link discovery, and Crawlbase is used for seed-page expansion. This keeps browser tech replaceable.
 - **External provider code must be centralized**: keep API-specific logic (Serper, future providers) in `utils/` adapter files and call them from tools/services. Avoid direct HTTP integration scattered across agents.
+- **ScraperAgent uses async workers, not LLM tool-calling**: the scraper bypasses LangGraph's tool loop entirely. It reads targets from SQLite, fans out async workers (semaphore-bounded), and routes each URL through a deterministic backend chain. The LLM is only invoked by the recovery sub-agent on failures.
+- **Scraper backend chain**: platform-specific first (Reddit JSON, Bluesky public API, YouTube oEmbed, Hacker News API, RSS parser), then generic/rendered fallbacks (`generic_http` → `firecrawl` → `crawlbase` → `camoufox`) based on platform.
+- **Scraper dual-persistence**: progress/status lives in per-topic SQLite (`scrape_targets`, `scrape_runs` tables in `data/scrapes/<topic>.db`); raw documents live in MongoDB (`scrape_targets`, `scraped_documents`, `scrape_runs` collections). SQLite is the queue; MongoDB is the document store.
+- **Document store is abstracted**: `BaseDocumentStore` ABC in `agents/services/document_store.py` → `MongoDocumentStore` implementation. The `build_document_store()` factory returns the active implementation. Swap backends by changing one file.
+- **Scraped documents use stable IDs derived from normalized URLs**: do not key raw Mongo documents by per-topic target IDs. `document_id` is deterministic per canonical URL, which allows cross-topic reuse and avoids duplicate raw documents when the same URL is harvested again.
+- **Reused raw documents must still be attached to the new topic**: when a URL is already scraped, the scraper now updates Mongo `topic_refs`, `topics`, `topic_slugs`, and `target_ids` instead of only marking the SQLite queue entry completed.
+- **Raw document payloads are now schema-rich**: `scraped_documents` stores `schema_version`, `authors`, `engagement`, `references`, `provenance`, normalized `content_items`, `raw_payload`, and `analysis_state` so cleaning/sentiment/vector phases can consume one stable raw shape.
+- **Scraper service files use `TYPE_CHECKING` imports**: to break the `agents.services → agents.scraper.models → agents.scraper.agent → agents.services` circular import, the service modules (`scraper_store.py`, `scraper_sources.py`, `document_store.py`) import scraper models under `TYPE_CHECKING` and add deferred runtime imports in functions that construct model objects.
+- **Scraper backend enablement now has one preferred source of truth**: use `SCRAPER_ENABLED_BACKENDS=generic_http,firecrawl,crawlbase,camoufox`. Legacy per-backend flags (`SCRAPER_ENABLE_*`) are still honored for backward compatibility, but new backend additions should go through `agents/services/scraper_runtime.py` first.
+- **Scraper env vars**: `SCRAPER_MAX_CONCURRENCY`, `SCRAPER_SOURCE_TIMEOUT_SECONDS`, `SCRAPER_MAX_TARGETS_PER_RUN`, `SCRAPER_MAX_RETRIES_PER_TARGET`, `SCRAPER_ALLOW_EXISTING_REUSE`, `SCRAPER_REUSE_EXISTING_DAYS`, `SCRAPER_ENABLED_BACKENDS`, plus legacy `SCRAPER_ENABLE_GENERIC_HTTP`, `SCRAPER_ENABLE_FIRECRAWL`, `SCRAPER_ENABLE_CRAWLBASE`, `SCRAPER_ENABLE_CAMOUFOX`.
+- **MongoDB connection**: `utils/mongodb.py` provides a lazy singleton `MongoClient`. Config via `MONGODB_URI` (full URI) or `MONGODB_HOST`+`MONGODB_PORT`. Database name via `MONGODB_DATABASE` (default: `sentiment_analyzer`). `pymongo>=4.12` is required.
+- **Mongo document indexes now include reuse/search helpers**: both `scrape_targets` and `scraped_documents` store `normalized_url_hash` and index it; documents also index `document_id`, `authors.name`, `references.url`, `content_items.item_id`, and `(topic_slugs, platform, published_at)` for downstream filtering and reuse lookup.
 
 ### Common Pitfalls to Avoid
 
@@ -250,20 +275,22 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 | Done ✅ | Not Yet ❌ |
 | --- | --- |
 | BaseLLM adapters (Gemini, Ollama, OpenAI, Dummy) | HuggingFace sentiment model integration |
-| Production structured logging | MongoDB integration |
-| EnvConfig singleton | Vector DB (FAISS/Pinecone) |
-| Prompt template manager (global + agent-local) | Convex DB / real-time layer |
-| Serper web search | Data cleaning agent |
-| SQLite link storage | RAG chat interface (placeholder only) |
-| **Multi-agent framework** (BaseAgent, registries) | Browser-based scraping (Playwright) |
-| **OrchestratorAgent** (react mode, sub-agent delegation) | Evaluation suite |
-| **PlannerAgent** (structured output → ResearchPlan) | Searcher/Harvester agent |
-| **HarvesterAgent** (structured output → `HarvestPlan`, async fan-out, queued SQLite writes) | Scraper agent |
-| **Agent resilience runtime** (timeout + retry + circuit breaker in `BaseAgent`) | Scraper agent |
-| **Planner checkpoint persistence** (topic SQLite DB with `topic_inputs` + `pipeline_artifacts`) | Summarizer agent |
-| **Tool registry** (@agent_tool, categories) | Scraper agent |
-| **Human-in-the-loop tool** (pluggable backend) | Summarizer agent |
-| **Demo mode** (static data for planning + harvesting only, no LLM) | HuggingFace sentiment scoring in the web pipeline |
+| Production structured logging | Vector DB (FAISS/Pinecone) |
+| EnvConfig singleton | Convex DB / real-time layer |
+| Prompt template manager (global + agent-local) | Data cleaning agent |
+| Serper web search | RAG chat interface (placeholder only) |
+| SQLite link storage | Evaluation suite |
+| **Multi-agent framework** (BaseAgent, registries) | Summarizer agent |
+| **OrchestratorAgent** (react mode, sub-agent delegation) | HuggingFace sentiment scoring in the web pipeline |
+| **PlannerAgent** (structured output → ResearchPlan) | |
+| **HarvesterAgent** (structured output → `HarvestPlan`, async fan-out, queued SQLite writes) | |
+| **ScraperAgent** (multi-backend deep extraction, recovery sub-agent, MongoDB persistence) | |
+| **Agent resilience runtime** (timeout + retry + circuit breaker in `BaseAgent`) | |
+| **Planner checkpoint persistence** (topic SQLite DB with `topic_inputs` + `pipeline_artifacts`) | |
+| **Tool registry** (@agent_tool, categories) | |
+| **Human-in-the-loop tool** (pluggable backend) | |
+| **MongoDB integration** (utils/mongodb.py + document store abstraction) | |
+| **Demo mode** (static data for planning + harvesting + scraping, no LLM) | |
 | **FastAPI backend** (REST + WebSocket + mock data) | |
 | **React dashboard** (TanStack Router/Query, Recharts) | |
 | **Chat UI** (messages, agent progress, adaptive input) | |
@@ -272,7 +299,7 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 | **Mock data generator** (150 posts, 5 platforms, deterministic) | |
 | **Export reports** (JSON / CSV / Markdown download) | |
 | **Version comparison** (structured diff, delta cards, narrative) | |
-| **Live agent→server bridge for planning + harvesting** | |
+| **Live agent→server bridge for planning + harvesting + scraping** | |
 | **Web clarification pause/resume flow** | |
 
 ---
@@ -505,6 +532,17 @@ class State(TypedDict):
 | `HARVESTER_ENABLE_CAMOUFOX` | No | `false` | Enable Camoufox browser discovery (requires either a server, the Python package, or CLI) |
 | `CAMOUFOX_ENDPOINT` | No | — | URL of a running Camoufox HTTP server; if unset local Python/CLI mode is used. |
 | `CAMOUFOX_CLI_PATH` | No | — | Optional explicit path to the `camoufox` CLI binary (e.g. `/usr/bin/python3 -m camoufox`). |
+| `SCRAPER_MAX_CONCURRENCY` | No | `6` | Maximum concurrent deep-scrape workers |
+| `SCRAPER_SOURCE_TIMEOUT_SECONDS` | No | `90` | Per-target/backend timeout for scraping operations |
+| `SCRAPER_MAX_TARGETS_PER_RUN` | No | `250` | Queue batch size for a single scraper run |
+| `SCRAPER_MAX_RETRIES_PER_TARGET` | No | `3` | Maximum backend attempts per URL before failure |
+| `SCRAPER_ALLOW_EXISTING_REUSE` | No | `true` | Reuse a recent raw document instead of scraping again |
+| `SCRAPER_REUSE_EXISTING_DAYS` | No | `7` | Maximum age of a reusable raw document |
+| `SCRAPER_ENABLED_BACKENDS` | No | `generic_http,firecrawl,crawlbase,camoufox` | Preferred centralized list of enabled generic scrape backends |
+| `SCRAPER_ENABLE_GENERIC_HTTP` | No | `true` | Legacy toggle for direct HTTP scraping |
+| `SCRAPER_ENABLE_FIRECRAWL` | No | `true` | Legacy toggle for Firecrawl scraping |
+| `SCRAPER_ENABLE_CRAWLBASE` | No | `true` | Legacy toggle for Crawlbase rendered fetching |
+| `SCRAPER_ENABLE_CAMOUFOX` | No | `true` | Legacy toggle for Camoufox browser scraping |
 | `LOG_LEVEL` | No | `INFO` | Logging level (DEBUG/INFO/WARNING/ERROR) |
 | `LOG_DIR` | No | `logs` | Log output directory |
 | `LOG_FILE_ENABLED` | No | `true` | Enable/disable file logging |

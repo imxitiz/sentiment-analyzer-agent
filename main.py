@@ -72,6 +72,7 @@ def main() -> None:
     from agents.orchestrator import OrchestratorAgent
     from agents.harvester import HarvesterAgent
     from agents.planner import PlannerAgent
+    from agents.scraper import ScraperAgent
 
     if args.demo:
         logger.info("Demo mode — using static data (no LLM)")
@@ -80,10 +81,11 @@ def main() -> None:
     # Create sub-agents (cheap model for planning)
     planner = PlannerAgent(llm_provider=provider)
     harvester = HarvesterAgent(llm_provider=provider)
+    scraper = ScraperAgent(llm_provider=provider)
 
     # Create orchestrator (powerful model for coordination)
     orchestrator = OrchestratorAgent(
-        sub_agents=[planner, harvester],
+        sub_agents=[planner, harvester, scraper],
         llm_provider=provider,
         model=model,
     )

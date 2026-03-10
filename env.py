@@ -57,6 +57,8 @@ class EnvConfig:
         "CRAWLBASE_TOKEN": None,
         "CRAWLBASE_JS_TOKEN": None,
         "SERPAPI_API_KEY": None,
+        "MONGODB_URI": None,
+        "MONGODB_DATABASE": "sentiment_analyzer",
         "CAMOUFOX_ENDPOINT": None,
         # optional path to the local Camoufox CLI executable; if set we will
         # prefer running ``<path>`` instead of ``python -m camoufox`` when launching
@@ -85,6 +87,18 @@ class EnvConfig:
         "HARVESTER_ENABLE_CRAWLBASE": "true",
         "HARVESTER_ENABLE_SERPAPI": "false",
         "HARVESTER_ENABLE_CAMOUFOX": "false",
+        # Scraper controls
+        "SCRAPER_MAX_CONCURRENCY": "6",
+        "SCRAPER_SOURCE_TIMEOUT_SECONDS": "90",
+        "SCRAPER_MAX_TARGETS_PER_RUN": "250",
+        "SCRAPER_MAX_RETRIES_PER_TARGET": "3",
+        "SCRAPER_ALLOW_EXISTING_REUSE": "true",
+        "SCRAPER_REUSE_EXISTING_DAYS": "7",
+        "SCRAPER_ENABLED_BACKENDS": "generic_http,firecrawl,crawlbase,camoufox",
+        "SCRAPER_ENABLE_GENERIC_HTTP": "true",
+        "SCRAPER_ENABLE_FIRECRAWL": "true",
+        "SCRAPER_ENABLE_CRAWLBASE": "true",
+        "SCRAPER_ENABLE_CAMOUFOX": "true",
         # Logging overrides (also consumed directly by Logging module,
         # listed here so they show up in the audit log)
         "LOG_LEVEL": "INFO",
@@ -102,6 +116,7 @@ class EnvConfig:
             "CRAWLBASE_TOKEN",
             "CRAWLBASE_JS_TOKEN",
             "SERPAPI_API_KEY",
+            "MONGODB_URI",
             "CAMOUFOX_ENDPOINT",
             "CAMOUFOX_CLI_PATH",
         }

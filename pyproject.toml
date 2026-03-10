@@ -21,6 +21,9 @@ dependencies = [
     "websockets>=15.0.1",
     "camoufox[geoip]>=0.4.11",
     "pytest>=9.0.2",
+    "pymongo>=4.12",
+    "beautifulsoup4>=4.13",
+    "lxml>=5.3",
 ]
 
 [tool.pyrefly]

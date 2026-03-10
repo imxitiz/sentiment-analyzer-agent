@@ -77,6 +77,7 @@ class OrchestratorAgent(BaseAgent):
         if sub_agents is None:
             from agents.harvester.agent import HarvesterAgent
             from agents.planner.agent import PlannerAgent
+            from agents.scraper.agent import ScraperAgent
             forwarded = {
                 k: v for k, v in kwargs.items()
                 if k in ("llm_provider",)
@@ -84,6 +85,7 @@ class OrchestratorAgent(BaseAgent):
             sub_agents = [
                 PlannerAgent(**forwarded),
                 HarvesterAgent(**forwarded),
+                ScraperAgent(**forwarded),
             ]
 
         self._sub_agents = sub_agents
@@ -255,18 +257,18 @@ class OrchestratorAgent(BaseAgent):
             sections.append(result["output"] + "\n")
 
         # Phase 5: Next steps
-        sections.extend([
-            "---\n",
-            "## Next Steps\n",
-            "1. **Search**: Use the queries above to harvest links (Serper API)",
-            "2. **Scrape**: Deep-scrape content from discovered links",
-            "3. **Clean**: Deduplicate, filter spam, normalise text",
-            "4. **Analyse**: Run sentiment model on cleaned data",
-            "5. **Visualise**: Push results to dashboard\n",
-            "*[DEMO MODE] This is a static demonstration run. "
-            "Use a real LLM provider (gemini/openai/ollama) for "
-            "production analysis.*",
-        ])
+        sections.extend(
+            [
+                "---\n",
+                "## Next Steps\n",
+                "1. **Clean**: Deduplicate, filter spam, normalise text",
+                "2. **Analyse**: Run sentiment model on cleaned data",
+                "3. **Visualise**: Push results to dashboard\n",
+                "*[DEMO MODE] This is a static demonstration run. "
+                "Use a real LLM provider (gemini/openai/ollama) for "
+                "production analysis.*",
+            ]
+        )
 
         output = "\n".join(sections)
         self._log.success(

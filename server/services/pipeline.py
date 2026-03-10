@@ -20,7 +20,7 @@ import asyncio
 import json
 import sqlite3
 
-from agents.services import db_path_for_topic, load_research_brief
+from agents.services import db_path_for_topic, load_latest_scrape_stats, load_research_brief
 from agents.tools.human import clear_human_input_handler, set_human_input_handler
 from server.config import server_config
 from server.models import (
@@ -241,11 +241,41 @@ def _harvester_sources_ready() -> tuple[bool, list[str], list[str]]:
     return bool(available), available, reasons
 
 
+def _scraper_ready() -> tuple[bool, list[str], list[str]]:
+    from env import config
+    from utils.camoufox import camoufox_is_available
+
+    available: list[str] = []
+    reasons: list[str] = []
+
+    if not config.get("MONGODB_URI"):
+        reasons.append("MONGODB_URI is required for live scraping document storage.")
+
+    if _bool_env("SCRAPER_ENABLE_GENERIC_HTTP", True):
+        available.append("generic_http")
+    if _bool_env("SCRAPER_ENABLE_FIRECRAWL", True) and config.get("FIRECRAWL_API_KEY"):
+        available.append("firecrawl")
+    if _bool_env("SCRAPER_ENABLE_CRAWLBASE", True) and (
+        config.get("CRAWLBASE_JS_TOKEN") or config.get("CRAWLBASE_TOKEN")
+    ):
+        available.append("crawlbase")
+    if _bool_env("SCRAPER_ENABLE_CAMOUFOX", True) and camoufox_is_available():
+        available.append("camoufox")
+
+    if not available:
+        reasons.append(
+            "No live scraper backend is currently usable. Enable generic HTTP, Firecrawl, Crawlbase, or Camoufox."
+        )
+
+    return not reasons, available, reasons
+
+
 def _live_readiness(provider: str) -> tuple[bool, list[str], list[str]]:
     provider_ok, provider_reasons = _provider_ready(provider)
     sources_ok, sources, source_reasons = _harvester_sources_ready()
-    reasons = provider_reasons + source_reasons
-    return provider_ok and sources_ok, sources, reasons
+    scraper_ok, scraper_sources, scraper_reasons = _scraper_ready()
+    reasons = provider_reasons + source_reasons + scraper_reasons
+    return provider_ok and sources_ok and scraper_ok, sources + scraper_sources, reasons
 
 
 def _load_plan_data(topic: str) -> ResearchPlanData | None:
@@ -308,12 +338,13 @@ def _build_web_human_handler(session_id: str, loop: asyncio.AbstractEventLoop):
 async def run_analysis_live(session_id: str, topic: str, provider: str = "gemini", model: str | None = None) -> None:
     """Run the currently implemented live pipeline (requires API keys).
 
-    This bridge should only reflect real implemented phases. Right now that is:
+        This bridge should only reflect real implemented phases. Right now that is:
       1. Orchestrator
       2. Planner
       3. Harvester
+            4. Scraper
 
-    It should not fabricate scraping, cleaning, or sentiment-analysis results.
+        It should not fabricate cleaning or sentiment-analysis results.
     """
     can_run_live, sources, reasons = _live_readiness(provider)
     if not can_run_live:
@@ -384,28 +415,55 @@ async def run_analysis_live(session_id: str, topic: str, provider: str = "gemini
     harvested_links = (
         harvested_links_value if isinstance(harvested_links_value, int) else 0
     )
+    scrape_stats = load_latest_scrape_stats(topic)
+    if scrape_stats is not None:
+        await session_manager.update_status(session_id, SessionStatus.SCRAPING)
+        await _emit(
+            session_id,
+            AgentEventType.AGENT_COMPLETE,
+            "scraper",
+            "Scraper completed deep content extraction.",
+            stats=scrape_stats,
+        )
+
     planned_keywords = len(plan_data.keywords) if plan_data is not None else 0
     planned_queries = len(plan_data.search_queries) if plan_data is not None else 0
+    scraped_documents_value = (
+        scrape_stats.get("completed", 0) if isinstance(scrape_stats, dict) else 0
+    )
+    scraped_documents = (
+        scraped_documents_value if isinstance(scraped_documents_value, int) else 0
+    )
+    reused_documents_value = (
+        scrape_stats.get("reused", 0) if isinstance(scrape_stats, dict) else 0
+    )
+    reused_documents = (
+        reused_documents_value if isinstance(reused_documents_value, int) else 0
+    )
     await session_manager.add_message(
         session_id,
         MessageRole.ASSISTANT,
         (
-            f"Planning and harvesting finished for **{topic}**.\n\n"
+            f"Planning, harvesting, and scraping finished for **{topic}**.\n\n"
             f"- Keywords planned: {planned_keywords}\n"
             f"- Search queries planned: {planned_queries}\n"
             f"- Candidate links harvested: {harvested_links}\n\n"
-            f"Scraping, cleaning, and sentiment scoring are not implemented yet, so no sentiment summary was produced."
+            f"- Raw documents scraped: {scraped_documents}\n"
+            f"- Existing documents reused: {reused_documents}\n\n"
+            f"Cleaning and sentiment scoring are not implemented yet, so no sentiment summary was produced."
         ),
         metadata={
             "kind": "pipeline_boundary",
-            "phase": "harvesting",
+            "phase": "scraping",
         },
     )
     await _emit(session_id, AgentEventType.PIPELINE_COMPLETE, "orchestrator",
-                "Planning and harvesting pipeline complete",
+                "Planning, harvesting, and scraping pipeline complete",
                 summary={
-                    "phase": "harvesting",
+                    "phase": "scraping",
                     "stored_links": harvested_links,
+                    "scraped_documents": scraped_documents,
+                    "reused_documents": reused_documents,
                     "keywords": planned_keywords,
                     "queries": planned_queries,
                 })

@@ -11,6 +11,7 @@ Public API::
         OrchestratorAgent,
         HarvesterAgent,
         PlannerAgent, ResearchPlan,
+            ScraperAgent,
     )
 
     # Quick start:
@@ -31,6 +32,7 @@ from ._registry import (
 from .orchestrator import OrchestratorAgent
 from .harvester import HarvesterAgent, HarvestPlan, HarvestTaskPlan
 from .planner import PlannerAgent, ResearchPlan
+from .scraper import ScraperAgent, ScrapeRuntimeConfig, ScrapeTarget, ScrapedContent
 
 __all__ = [
     # Base
@@ -48,4 +50,8 @@ __all__ = [
     "HarvestTaskPlan",
     "PlannerAgent",
     "ResearchPlan",
+    "ScraperAgent",
+    "ScrapeRuntimeConfig",
+    "ScrapeTarget",
+    "ScrapedContent",
 ]
