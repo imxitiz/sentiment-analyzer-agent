@@ -20,7 +20,7 @@ In a production environment, data ingestion is structured into layers. The "Bron
 | :---- | :---- | :---- |
 | **Link Harvester** | Firecrawl Search / Bright Data MCP | Discovers URLs, tags them by platform, and populates the Bronze Layer.10 |
 | **Queue Manager** | Convex Mutations | Ensures ACID-compliant writes of link sets and handles concurrency.9 |
-| **Extraction Worker** | Camoufox / nodriver | Performs deep-page extraction, rendering JS, and bypassing anti-bots.14 |
+| **Extraction Worker** | Camoufox (remote/Python/CLI) / nodriver | Performs deep-page extraction, rendering JS, and bypassing anti-bots.14 |
 | **Quality Controller** | Claude 3.5 / GPT-4o-mini | Monitors information density; kills workers if data becomes repetitive.1 |
 
 This separation also enables better rate-limit management. Harvester agents can run at high frequencies with minimal footprints to map the landscape, while the more resource-heavy extraction workers are throttled according to the specific platform's tolerance, reducing the risk of a "nuclear" ban that would halt the entire project.2
@@ -28,6 +28,8 @@ This separation also enables better rate-limit management. Harvester agents can 
 ### **Stealth Ingestion and Anti-Bot Bypass**
 
 By 2026, social media platforms have perfected the detection of Chromium-based automation. The "stealth" war is now fought at the C++ level. Tools like Camoufox, which is based on Firefox, bypass detection not through JavaScript patches—which are easily identified—but by spoofing fingerprints at the browser core.14  
+
+The project ships a full Python interface (``pip install camoufox[geoip]``) that mirrors Playwright semantics (`from camoufox.sync_api import Camoufox`).  For scale you can run a remote websocket server (`python -m camoufox server`) and point any language at it, or even drive it via the CLI.  Our harvester layer treats Camoufox as just another provider: remote endpoint, local library, or CLI subprocess, whichever is available.
 Modern scrapers must also address TLS (Transport Layer Security) fingerprinting. Servers can identify bot traffic before a single byte of HTML is even sent by analyzing the "handshake" patterns of the client.14 Implementing curl\_cffi allows the Python-based extraction agent to mimic a real Chrome or Safari handshake, effectively bypassing Web Application Firewalls (WAFs) like Cloudflare or Akamai.14 For a sentiment analyzer project, where the goal is to extract high-quality, unstructured opinions, the system should prioritize hitting internal JSON or GraphQL endpoints rather than brittle DOM selectors. Intercepting these XHR calls is 10x more durable and provides structured data that requires significantly less cleaning.2
 
 ## **The Reactive Backend: Convex DB and Real-Time State**

@@ -28,6 +28,9 @@ function renderContent(content: string) {
 }
 
 export function MessageBubble({ message }: MessageBubbleProps) {
+  const isClarificationRequest =
+    message.role === "assistant" && message.metadata?.kind === "clarification_request";
+
   if (message.role === "system") {
     return (
       <div className="flex justify-center my-2">
@@ -63,9 +66,16 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           "px-4 py-3 rounded-2xl text-sm leading-relaxed max-w-xl",
           isUser
             ? "bg-primary text-primary-foreground rounded-br-md"
-            : "bg-card border border-border rounded-bl-md",
+            : isClarificationRequest
+              ? "bg-amber-50 border border-amber-200 text-amber-950 rounded-bl-md dark:bg-amber-950/20 dark:border-amber-900 dark:text-amber-100"
+              : "bg-card border border-border rounded-bl-md",
         )}
       >
+        {isClarificationRequest && (
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-600 dark:text-amber-300">
+            Clarification Needed
+          </div>
+        )}
         <span
           dangerouslySetInnerHTML={{ __html: renderContent(message.content) }}
         />

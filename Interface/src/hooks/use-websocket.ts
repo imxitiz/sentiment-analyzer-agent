@@ -28,7 +28,9 @@ export function useSessionWebSocket(sessionId: string | undefined) {
       // When pipeline completes or status changes to completed, refetch session
       if (
         event.type === "pipeline_complete" ||
-        (event.type === "status_change" && event.data?.status === "completed")
+        event.type === "clarification_needed" ||
+        event.type === "agent_complete" ||
+        event.type === "status_change"
       ) {
         if (sessionId) {
           qc.invalidateQueries({

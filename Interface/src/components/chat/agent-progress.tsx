@@ -33,6 +33,7 @@ const AGENT_META: Record<
   cleaner: { icon: ClipboardCheck, color: "text-teal-500", label: "Cleaner" },
   analyser: { icon: Sparkles, color: "text-rose-500", label: "Analyser" },
   orchestrator: { icon: Brain, color: "text-primary", label: "Orchestrator" },
+  human: { icon: AlertTriangle, color: "text-amber-500", label: "Human" },
 };
 
 function getAgentMeta(agent: string) {
@@ -52,6 +53,8 @@ function EventTypeIcon({ type }: { type: string }) {
       return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />;
     case "error":
       return <AlertTriangle className="h-3.5 w-3.5 text-red-500" />;
+    case "clarification_needed":
+      return <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />;
     default:
       return <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />;
   }
@@ -67,8 +70,15 @@ export function AgentProgress({ events, status }: AgentProgressProps) {
     <div className="space-y-1.5 py-3 max-w-3xl mx-auto">
       {/* Status badge */}
       <div className="flex items-center gap-2 px-3 py-1.5 mb-2">
-        <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
-        <span className="text-xs font-medium text-blue-500">
+        {status === "clarification_needed" ? (
+          <AlertTriangle className="h-4 w-4 text-amber-500" />
+        ) : (
+          <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+        )}
+        <span className={cn(
+          "text-xs font-medium",
+          status === "clarification_needed" ? "text-amber-500" : "text-blue-500",
+        )}>
           {SESSION_STATUS_LABELS[status]}
         </span>
       </div>

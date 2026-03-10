@@ -33,6 +33,11 @@ export function ChatView({ session, events }: ChatViewProps) {
   const showTopicInput = session.status === "idle" && !session.topic;
   const showMessageInput = session.status === "completed";
   const showProgress = isSessionActive(session.status) && events.length > 0;
+  const clarificationMessage = [...session.messages]
+    .reverse()
+    .find((message) => message.metadata?.kind === "clarification_request");
+  const showClarificationBanner =
+    session.status === "clarification_needed" && clarificationMessage;
 
   return (
     <div className="flex flex-col h-full">
@@ -49,6 +54,20 @@ export function ChatView({ session, events }: ChatViewProps) {
                 plan the research, collect data from multiple platforms, and
                 generate insights.
               </p>
+            </div>
+          </div>
+        )}
+
+        {showClarificationBanner && (
+          <div className="mx-auto max-w-3xl rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-amber-950 shadow-sm dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-100">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-600 dark:text-amber-300">
+              Agent Needs Clarification
+            </div>
+            <div className="mt-2 text-sm leading-relaxed">
+              {clarificationMessage.content}
+            </div>
+            <div className="mt-3 text-xs text-amber-700 dark:text-amber-200">
+              Reply below to unblock the run. The agent will continue from your answer.
             </div>
           </div>
         )}

@@ -104,3 +104,5 @@ class HarvesterRuntimeConfig:
     enable_firecrawl: bool = True
     enable_browser_discovery: bool = True
     enable_crawlbase: bool = True
+    enable_serpapi: bool = False
+    enable_camoufox: bool = False

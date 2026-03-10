@@ -45,7 +45,6 @@ export function HomePage() {
       startAnalysis.mutate({
         sessionId: session.id,
         topic: topicText.trim(),
-        llm_provider: "dummy",
       });
     } catch {
       // Error handled by query

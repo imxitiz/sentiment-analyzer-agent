@@ -47,7 +47,6 @@ export function ChatInput({ sessionId, sessionStatus, topic }: ChatInputProps) {
       startAnalysis.mutate({
         sessionId,
         topic: text,
-        llm_provider: "dummy",
       });
     } else if (isCompleted || isClarification) {
       // Send follow-up message

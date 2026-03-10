@@ -56,6 +56,13 @@ class EnvConfig:
         "FIRECRAWL_API_KEY": None,
         "CRAWLBASE_TOKEN": None,
         "CRAWLBASE_JS_TOKEN": None,
+        "SERPAPI_API_KEY": None,
+        "CAMOUFOX_ENDPOINT": None,
+        # optional path to the local Camoufox CLI executable; if set we will
+        # prefer running ``<path>`` instead of ``python -m camoufox`` when launching
+        # servers or fetching the browser.  This is useful when a virtualenv or
+        # container has several pythons in play.
+        "CAMOUFOX_CLI_PATH": None,
         "OLLAMA_BASE_URL": "http://localhost:11434",
         # Agent runtime resilience defaults
         "AGENT_TIMEOUT_SECONDS": "300",
@@ -76,6 +83,8 @@ class EnvConfig:
         "HARVESTER_ENABLE_FIRECRAWL": "true",
         "HARVESTER_ENABLE_BROWSER_DISCOVERY": "true",
         "HARVESTER_ENABLE_CRAWLBASE": "true",
+        "HARVESTER_ENABLE_SERPAPI": "false",
+        "HARVESTER_ENABLE_CAMOUFOX": "false",
         # Logging overrides (also consumed directly by Logging module,
         # listed here so they show up in the audit log)
         "LOG_LEVEL": "INFO",
@@ -84,14 +93,19 @@ class EnvConfig:
     }
 
     # Keys whose values are secrets and must be masked in logs
-    _SECRETS: frozenset[str] = frozenset({
-        "GOOGLE_API_KEY",
-        "OPENAI_API_KEY",
-        "SERPER_API_KEY",
-        "FIRECRAWL_API_KEY",
-        "CRAWLBASE_TOKEN",
-        "CRAWLBASE_JS_TOKEN",
-    })
+    _SECRETS: frozenset[str] = frozenset(
+        {
+            "GOOGLE_API_KEY",
+            "OPENAI_API_KEY",
+            "SERPER_API_KEY",
+            "FIRECRAWL_API_KEY",
+            "CRAWLBASE_TOKEN",
+            "CRAWLBASE_JS_TOKEN",
+            "SERPAPI_API_KEY",
+            "CAMOUFOX_ENDPOINT",
+            "CAMOUFOX_CLI_PATH",
+        }
+    )
 
     def __init__(self) -> None:
         self._cache: dict[str, str | None] = {}

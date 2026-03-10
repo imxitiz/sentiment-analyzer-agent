@@ -99,7 +99,34 @@ class OrchestratorAgent(BaseAgent):
 
         # Built-in tools
         from agents.tools.human import ask_human
+        from agents.tools.browser import (
+            camoufox_click_browser,
+            camoufox_close_all_browser_sessions,
+            camoufox_close_browser_session,
+            camoufox_evaluate_browser,
+            camoufox_extract_links_browser,
+            camoufox_extract_text_browser,
+            camoufox_list_browser_sessions,
+            camoufox_navigate_browser,
+            camoufox_open_browser,
+            camoufox_type_browser,
+        )
+
         tools.append(ask_human)
+        tools.extend(
+            [
+                camoufox_open_browser,
+                camoufox_navigate_browser,
+                camoufox_click_browser,
+                camoufox_type_browser,
+                camoufox_extract_text_browser,
+                camoufox_extract_links_browser,
+                camoufox_evaluate_browser,
+                camoufox_list_browser_sessions,
+                camoufox_close_browser_session,
+                camoufox_close_all_browser_sessions,
+            ]
+        )
 
         return tools
 

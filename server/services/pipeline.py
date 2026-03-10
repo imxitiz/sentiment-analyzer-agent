@@ -17,14 +17,18 @@ Usage::
 from __future__ import annotations
 
 import asyncio
-import uuid
-from datetime import datetime
+import json
+import sqlite3
 
+from agents.services import db_path_for_topic, load_research_brief
+from agents.tools.human import clear_human_input_handler, set_human_input_handler
+from server.config import server_config
 from server.models import (
     AgentEvent,
     AgentEventType,
     ChatMessage,
     MessageRole,
+    ResearchPlanData,
     SessionStatus,
 )
 from server.services.session_manager import session_manager
@@ -83,26 +87,27 @@ async def run_analysis_demo(session_id: str, topic: str) -> None:
         f"{len(plan.hashtags)} hashtags, and "
         f"{len(plan.search_queries)} search queries across "
         f"{len(plan.platforms)} platforms.\n\n"
-        f"Starting data collection...")
+        f"Starting link harvesting...")
 
-    # Phase 2: Searching
+    # Phase 2: Harvesting
     await session_manager.update_status(session_id, SessionStatus.SEARCHING)
-    await _emit(session_id, AgentEventType.AGENT_START, "searcher",
-                "Harvesting links from search engines...")
+    await _emit(session_id, AgentEventType.AGENT_START, "harvester",
+                "Harvesting candidate links from search sources...")
     await asyncio.sleep(0.5)
 
     total_links = 0
     for query in plan.search_queries[:4]:
         found = 15 + hash(query) % 20
         total_links += found
-        await _emit(session_id, AgentEventType.AGENT_PROGRESS, "searcher",
+        await _emit(session_id, AgentEventType.AGENT_PROGRESS, "harvester",
                     f'Found {found} results for "{query}"',
                     query=query, found=found, total=total_links)
         await asyncio.sleep(0.4)
 
-    await _emit(session_id, AgentEventType.AGENT_COMPLETE, "searcher",
-                f"Search complete: {total_links} links discovered",
-                total_links=total_links)
+    stored_links = max(total_links - max(5, total_links // 6), 0)
+    await _emit(session_id, AgentEventType.AGENT_COMPLETE, "harvester",
+                f"Harvesting complete: {stored_links} candidate links stored",
+                total_links=total_links, stored_links=stored_links)
 
     # Phase 3: Scraping
     await session_manager.update_status(session_id, SessionStatus.SCRAPING)
@@ -184,19 +189,227 @@ async def run_analysis_demo(session_id: str, topic: str) -> None:
     await session_manager.update_status(session_id, SessionStatus.COMPLETED)
 
 
+def _provider_ready(provider: str) -> tuple[bool, list[str]]:
+    from env import config
+
+    normalized = provider.strip().lower()
+    reasons: list[str] = []
+    if normalized == "dummy":
+        reasons.append("The dummy provider only supports demo mode.")
+        return False, reasons
+
+    if normalized in {"google", "gemini", "genai"} and not config.get("GOOGLE_API_KEY"):
+        reasons.append("GOOGLE_API_KEY is required for the selected Gemini provider.")
+    elif normalized in {"openai", "chatgpt", "gpt"} and not config.get("OPENAI_API_KEY"):
+        reasons.append("OPENAI_API_KEY is required for the selected OpenAI provider.")
+    elif normalized not in {"google", "gemini", "genai", "openai", "chatgpt", "gpt", "ollama"}:
+        reasons.append(f"Unsupported live provider: {provider}.")
+
+    return not reasons, reasons
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    from env import config
+
+    raw = config.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _harvester_sources_ready() -> tuple[bool, list[str], list[str]]:
+    from env import config
+    from utils.camoufox import camoufox_is_available
+
+    available: list[str] = []
+    reasons: list[str] = []
+
+    if _bool_env("HARVESTER_ENABLE_SERPER", True) and config.get("SERPER_API_KEY"):
+        available.append("serper")
+    if _bool_env("HARVESTER_ENABLE_FIRECRAWL", True) and config.get("FIRECRAWL_API_KEY"):
+        available.append("firecrawl")
+    if _bool_env("HARVESTER_ENABLE_SERPAPI", False) and config.get("SERPAPI_API_KEY"):
+        available.append("serpapi")
+    if _bool_env("HARVESTER_ENABLE_CAMOUFOX", False) and camoufox_is_available():
+        available.append("camoufox")
+
+    if not available:
+        reasons.append(
+            "No live harvesting source is currently usable. Enable at least one of Serper, Firecrawl, SerpAPI, or Camoufox."
+        )
+
+    return bool(available), available, reasons
+
+
+def _live_readiness(provider: str) -> tuple[bool, list[str], list[str]]:
+    provider_ok, provider_reasons = _provider_ready(provider)
+    sources_ok, sources, source_reasons = _harvester_sources_ready()
+    reasons = provider_reasons + source_reasons
+    return provider_ok and sources_ok, sources, reasons
+
+
+def _load_plan_data(topic: str) -> ResearchPlanData | None:
+    brief = load_research_brief(topic)
+    if not brief.topic_summary and not brief.keywords and not brief.search_queries:
+        return None
+    return ResearchPlanData(
+        topic_summary=brief.topic_summary,
+        keywords=brief.keywords,
+        hashtags=brief.hashtags,
+        platforms=brief.platforms,
+        search_queries=brief.search_queries,
+        estimated_volume=brief.estimated_volume,
+        reasoning=brief.reasoning,
+    )
+
+
+def _load_latest_harvest_stats(topic: str) -> dict[str, object] | None:
+    path = db_path_for_topic(topic)
+    if not path.exists():
+        return None
+
+    with sqlite3.connect(path) as conn:
+        row = conn.execute(
+            """
+            SELECT stats_json, status
+            FROM harvest_runs
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+
+    if not row:
+        return None
+
+    stats_json, status = row
+    stats = json.loads(stats_json) if stats_json else {}
+    if isinstance(stats, dict):
+        stats["status"] = status
+        return stats
+    return {"status": status}
+
+
+def _build_web_human_handler(session_id: str, loop: asyncio.AbstractEventLoop):
+    def _handler(question: str) -> str:
+        future = asyncio.run_coroutine_threadsafe(
+            session_manager.request_clarification(
+                session_id,
+                question,
+                agent="orchestrator",
+                resume_status=SessionStatus.PLANNING,
+            ),
+            loop,
+        )
+        return future.result()
+
+    return _handler
+
+
 async def run_analysis_live(session_id: str, topic: str, provider: str = "gemini", model: str | None = None) -> None:
-    """Run the actual agent pipeline (requires API keys).
+    """Run the currently implemented live pipeline (requires API keys).
 
-    This bridges the web API to the existing CLI agent pipeline:
-      1. Creates OrchestratorAgent and PlannerAgent
-      2. Streams execution steps
-      3. Converts agent output to AnalysisResult
+    This bridge should only reflect real implemented phases. Right now that is:
+      1. Orchestrator
+      2. Planner
+      3. Harvester
 
-    TODO: Implement live agent integration when agents support async streaming.
-    For now, falls back to demo mode.
+    It should not fabricate scraping, cleaning, or sentiment-analysis results.
     """
-    # Fallback to demo mode for now
-    await run_analysis_demo(session_id, topic)
+    can_run_live, sources, reasons = _live_readiness(provider)
+    if not can_run_live:
+        await _emit(
+            session_id,
+            AgentEventType.AGENT_PROGRESS,
+            "orchestrator",
+            "Live pipeline is not fully ready for this configuration. Falling back to demo mode.",
+            reasons=reasons,
+        )
+        await run_analysis_demo(session_id, topic)
+        return
+
+    # run real agents in background thread to avoid blocking event loop
+    from agents.orchestrator import OrchestratorAgent
+    from utils.camoufox import camoufox_close_all_browsers
+
+    await session_manager.update_status(session_id, SessionStatus.PLANNING)
+    await _emit(session_id, AgentEventType.AGENT_START, "orchestrator",
+                f"Running orchestrator for {topic}", sources=sources)
+
+    loop = asyncio.get_running_loop()
+    set_human_input_handler(_build_web_human_handler(session_id, loop))
+    orchestrator = OrchestratorAgent(llm_provider=provider, model=model)
+    try:
+        result = await asyncio.to_thread(orchestrator.invoke, topic)
+    except Exception as exc:
+        await _emit(session_id, AgentEventType.ERROR, "orchestrator",
+                    f"Orchestrator failed: {exc}", error=str(exc))
+        await session_manager.update_status(session_id, SessionStatus.ERROR)
+        return
+    finally:
+        clear_human_input_handler()
+        try:
+            camoufox_close_all_browsers()
+        except Exception:
+            pass
+
+    await _emit(session_id, AgentEventType.AGENT_COMPLETE, "orchestrator",
+                "Orchestrator run complete",
+                output=result.get("output"))
+
+    plan_data = _load_plan_data(topic)
+    if plan_data is not None:
+        await _emit(
+            session_id,
+            AgentEventType.AGENT_COMPLETE,
+            "planner",
+            f"Research plan generated with {len(plan_data.keywords)} keywords and {len(plan_data.search_queries)} queries.",
+            keywords=plan_data.keywords[:8],
+            queries=plan_data.search_queries[:5],
+        )
+
+    harvest_stats = _load_latest_harvest_stats(topic)
+    if harvest_stats is not None:
+        await session_manager.update_status(session_id, SessionStatus.SEARCHING)
+        await _emit(
+            session_id,
+            AgentEventType.AGENT_COMPLETE,
+            "harvester",
+            "Harvester completed candidate-link collection.",
+            stats=harvest_stats,
+        )
+
+    harvested_links_value = (
+        harvest_stats.get("stored_links", 0) if isinstance(harvest_stats, dict) else 0
+    )
+    harvested_links = (
+        harvested_links_value if isinstance(harvested_links_value, int) else 0
+    )
+    planned_keywords = len(plan_data.keywords) if plan_data is not None else 0
+    planned_queries = len(plan_data.search_queries) if plan_data is not None else 0
+    await session_manager.add_message(
+        session_id,
+        MessageRole.ASSISTANT,
+        (
+            f"Planning and harvesting finished for **{topic}**.\n\n"
+            f"- Keywords planned: {planned_keywords}\n"
+            f"- Search queries planned: {planned_queries}\n"
+            f"- Candidate links harvested: {harvested_links}\n\n"
+            f"Scraping, cleaning, and sentiment scoring are not implemented yet, so no sentiment summary was produced."
+        ),
+        metadata={
+            "kind": "pipeline_boundary",
+            "phase": "harvesting",
+        },
+    )
+    await _emit(session_id, AgentEventType.PIPELINE_COMPLETE, "orchestrator",
+                "Planning and harvesting pipeline complete",
+                summary={
+                    "phase": "harvesting",
+                    "stored_links": harvested_links,
+                    "keywords": planned_keywords,
+                    "queries": planned_queries,
+                })
+    await session_manager.update_status(session_id, SessionStatus.COMPLETED)
 
 
 async def run_analysis(

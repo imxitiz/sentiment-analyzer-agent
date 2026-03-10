@@ -208,7 +208,7 @@ class CreateSessionRequest(BaseModel):
     """POST /api/sessions — create a new analysis session."""
 
     topic: str | None = None
-    llm_provider: str = "dummy"
+    llm_provider: str | None = None
     llm_model: str | None = None
 
 
@@ -222,7 +222,7 @@ class StartAnalysisRequest(BaseModel):
     """POST /api/sessions/{id}/start — begin analysis."""
 
     topic: str
-    llm_provider: str = "dummy"
+    llm_provider: str | None = None
     llm_model: str | None = None
 
 

@@ -41,6 +41,8 @@ class SessionManager:
         self._lock = asyncio.Lock()
         # WebSocket connections per session: {session_id: set[callback]}
         self._subscribers: dict[str, set[Any]] = {}
+        self._clarification_waiters: dict[str, asyncio.Future[str]] = {}
+        self._clarification_meta: dict[str, dict[str, Any]] = {}
 
     async def create_session(
         self,
@@ -156,6 +158,89 @@ class SessionManager:
             session.updated_at = datetime.now()
 
         await self.emit_event(session_id, event)
+
+    async def request_clarification(
+        self,
+        session_id: str,
+        question: str,
+        *,
+        agent: str = "orchestrator",
+        resume_status: SessionStatus = SessionStatus.PLANNING,
+    ) -> str:
+        """Pause a running session until the user answers a clarification question."""
+        session = self._sessions.get(session_id)
+        if not session:
+            raise ValueError(f"Unknown session: {session_id}")
+
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[str] = loop.create_future()
+
+        async with self._lock:
+            existing = self._clarification_waiters.get(session_id)
+            if existing and not existing.done():
+                raise RuntimeError("A clarification request is already pending for this session.")
+
+            self._clarification_waiters[session_id] = future
+            self._clarification_meta[session_id] = {
+                "question": question,
+                "agent": agent,
+                "resume_status": resume_status,
+            }
+
+        await self.update_status(session_id, SessionStatus.CLARIFICATION)
+        await self.add_message(
+            session_id,
+            MessageRole.ASSISTANT,
+            question,
+            metadata={
+                "kind": "clarification_request",
+                "agent": agent,
+            },
+        )
+        await self.add_event(
+            session_id,
+            AgentEvent(
+                type=AgentEventType.CLARIFICATION,
+                agent=agent,
+                message=question,
+                data={
+                    "question": question,
+                    "awaiting_response": True,
+                },
+            ),
+        )
+
+        try:
+            response = await future
+        finally:
+            async with self._lock:
+                self._clarification_waiters.pop(session_id, None)
+                meta = self._clarification_meta.pop(session_id, None)
+
+            resume = meta.get("resume_status") if meta else resume_status
+            if isinstance(resume, SessionStatus):
+                await self.update_status(session_id, resume)
+
+        return response
+
+    async def submit_clarification_response(
+        self,
+        session_id: str,
+        response: str,
+    ) -> bool:
+        """Resume a pending clarification request if one exists."""
+        async with self._lock:
+            future = self._clarification_waiters.get(session_id)
+
+        if future is None or future.done():
+            return False
+
+        future.set_result(response)
+        return True
+
+    async def get_pending_clarification(self, session_id: str) -> dict[str, Any] | None:
+        """Return metadata about the current clarification request, if any."""
+        return self._clarification_meta.get(session_id)
 
     async def set_result(
         self,

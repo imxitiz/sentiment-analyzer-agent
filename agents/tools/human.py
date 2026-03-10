@@ -34,8 +34,14 @@ def set_human_input_handler(handler: Callable[[str], str]) -> None:
             the user's response string.  Can be a WebSocket callback,
             a GUI dialog, etc.
     """
-    global _human_input_handler  # noqa: PLW0603
+    global _human_input_handler
     _human_input_handler = handler
+
+
+def clear_human_input_handler() -> None:
+    """Restore the default CLI-backed input handler."""
+    global _human_input_handler
+    _human_input_handler = None
 
 
 # ── The tool ─────────────────────────────────────────────────────────
@@ -47,6 +53,9 @@ def ask_human(question: str) -> str:
     Use this ONLY when the topic is genuinely ambiguous or you need
     critical information that cannot be inferred.  Do NOT ask
     unnecessarily — most topics are clear enough to proceed directly.
+
+    In the web app this should surface a visible clarification prompt and
+    temporarily pause the agent until the user responds.
 
     Args:
         question: The question to ask the user.
@@ -62,3 +71,10 @@ def ask_human(question: str) -> str:
     response = input("Your response: ").strip()
     print(f"{'─' * 60}\n")
     return response
+
+
+__all__ = [
+    "ask_human",
+    "clear_human_input_handler",
+    "set_human_input_handler",
+]

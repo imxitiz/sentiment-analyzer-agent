@@ -51,8 +51,40 @@ def firecrawl_browser_collect_links(url: str, max_links: int = 40) -> str:
         return json.dumps({"success": True, "url": url, "result": result.get("result", "[]")}, ensure_ascii=False)
     except Exception as exc:
         return json.dumps({"success": False, "error": str(exc), "url": url}, ensure_ascii=False)
-    finally:
-        delete_firecrawl_browser(session_id)
+
+
+@agent_tool(category="search")
+def serpapi_search_results(query: str, max_results: int = 10) -> str:
+    """Search the web via SerpAPI and return JSON payload."""
+    try:
+        from utils.serpapi import search_serpapi
+
+        data = search_serpapi(query, max_results=max_results)
+        return json.dumps(data, ensure_ascii=False)
+    except Exception as exc:
+        return json.dumps({"success": False, "error": str(exc), "query": query}, ensure_ascii=False)
+
+
+@agent_tool(category="browser")
+def camoufox_browser_collect_links(url: str, max_links: int = 40) -> str:
+    """Extract links from *url* using Camoufox.
+
+    This will automatically choose the best available backend:
+    1. Remote ``CAMOUFOX_ENDPOINT`` if configured.
+    2. Local ``camoufox`` Python package (recommended).
+    3. CLI subprocess fallback.
+
+    The returned JSON matches :func:`utils.camoufox.camoufox_fetch_anchors`
+    and is deliberately permissive so calling agents can inspect whatever
+    the underlying library or server returns.
+    """
+    try:
+        from utils.camoufox import camoufox_fetch_anchors
+
+        payload = camoufox_fetch_anchors(url, max_links=max_links)
+        return json.dumps({"success": True, "url": url, "result": payload}, ensure_ascii=False)
+    except Exception as exc:
+        return json.dumps({"success": False, "error": str(exc), "url": url}, ensure_ascii=False)
 
 
 @agent_tool(category="browser")

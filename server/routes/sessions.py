@@ -17,7 +17,10 @@ import asyncio
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 
 from agents.services import bootstrap_topic
+from server.config import server_config
 from server.models import (
+    AgentEvent,
+    AgentEventType,
     CreateSessionRequest,
     CreateSessionResponse,
     MessageRole,
@@ -52,7 +55,7 @@ async def create_session(req: CreateSessionRequest):
     """
     session = await session_manager.create_session(
         topic=req.topic,
-        llm_provider=req.llm_provider,
+        llm_provider=req.llm_provider or server_config.DEFAULT_LLM_PROVIDER,
     )
     return CreateSessionResponse(session=session)
 
@@ -98,8 +101,9 @@ async def start_analysis(
         )
 
     # Update topic if different
+    provider = req.llm_provider or session.llm_provider or server_config.DEFAULT_LLM_PROVIDER
     session.topic = req.topic
-    session.llm_provider = req.llm_provider
+    session.llm_provider = provider
 
     # Bootstrap DB checkpointing immediately on topic intake
     bootstrap_topic(req.topic)
@@ -113,8 +117,8 @@ async def start_analysis(
     await session_manager.add_message(
         session_id, MessageRole.ASSISTANT,
         f"Starting sentiment analysis for **\"{req.topic}\"**...\n\n"
-        f"I'll analyse public opinion across multiple platforms. "
-        f"This typically takes 30-60 seconds.",
+        f"I'll generate a research plan and harvest candidate links first. "
+        f"Later pipeline stages will be added incrementally.",
     )
 
     # Launch pipeline as background task
@@ -122,7 +126,7 @@ async def start_analysis(
         run_analysis,
         session_id=session_id,
         topic=req.topic,
-        provider=req.llm_provider,
+        provider=provider,
         model=req.llm_model,
     )
 
@@ -247,6 +251,23 @@ async def send_message(session_id: str, req: SendMessageRequest):
     await session_manager.add_message(
         session_id, MessageRole.USER, req.content,
     )
+
+    clarification_resumed = await session_manager.submit_clarification_response(
+        session_id,
+        req.content,
+    )
+    if clarification_resumed:
+        await session_manager.add_event(
+            session_id,
+            AgentEvent(
+                type=AgentEventType.AGENT_PROGRESS,
+                agent="human",
+                message="Clarification received. Resuming the agent run.",
+                data={"resumed": True},
+            ),
+        )
+        session = await session_manager.get_session(session_id)
+        return SessionDetailResponse(session=session)  # type: ignore[arg-type]
 
     # If session is completed, add a chat response using the analysis results
     if session.status == SessionStatus.COMPLETED and session.result:

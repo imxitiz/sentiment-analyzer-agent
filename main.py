@@ -56,6 +56,19 @@ def main() -> None:
     provider = "dummy" if args.demo else args.provider
     model = None if args.demo else args.model
 
+    # if we're not already in demo mode, verify that essential keys exist;
+    # otherwise default to dummy provider so the pipeline stays runnable.
+    if not args.demo:
+        from env import config
+        try:
+            config.require("SERPER_API_KEY")
+        except EnvironmentError:
+            logger.warning(
+                "SERPER_API_KEY missing, forcing demo mode",
+                action="fallback_demo",
+            )
+            provider = "dummy"
+
     from agents.orchestrator import OrchestratorAgent
     from agents.harvester import HarvesterAgent
     from agents.planner import PlannerAgent

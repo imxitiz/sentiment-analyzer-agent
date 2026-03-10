@@ -56,7 +56,7 @@ uv run python main.py --topic "electric vehicles" --provider gemini
 # 4b. Run in demo mode (no API keys needed!)
 uv run python main.py --topic "Nepal elections 2026" --demo
 
-# 5. Start the backend API server (demo mode, no keys needed)
+# 5. Start the backend API server (live mode with API keys; falls back to demo when keys are missing)
 uv run python -m server
 # API: http://localhost:8000  Docs: http://localhost:8000/api/docs
 
@@ -133,13 +133,16 @@ Pipeline flow:  Plan → Search → Scrape → Clean → Analyze → Summarize
 | `agents/services/planner_checkpoint.py` | Topic DB init + append-only persistence (`topic_inputs`, `pipeline_artifacts`) |
 | `agents/services/orchestrator_checkpoint.py` | Central orchestrator DB (`topic_runs`, `orchestrator_events`) + topic bootstrap |
 | `agents/services/harvester_store.py` | Harvester SQLite schema, URL normalization, quality scoring, and async writer queue |
-| `agents/services/harvester_sources.py` | Search providers and browser expansion runtime (Serper, Firecrawl, Crawlbase) |
+| `agents/services/harvester_sources.py` | Search providers and browser expansion runtime (Serper, SerpAPI, Firecrawl, Camoufox, Crawlbase) |
 | `agents/tools/_registry.py` | `@agent_tool` decorator, tool catalog with categories |
-| `agents/tools/human.py` | Human-in-the-loop tool (CLI input, swappable backend) |
+| `agents/tools/human.py` | Human-in-the-loop tool (CLI input, swappable backend, web clarification bridge) |
+| `agents/tools/browser.py` | Agent-facing Camoufox browser session tools (open/navigate/click/type/extract/evaluate/close) |
 | `agents/tools/search.py` | Tool: `google_search_snippets` (Serper API top results for planner context) |
 | `agents/tools/harvest.py` | Reusable harvest tools for Firecrawl search/browser and Crawlbase page fetch |
 | `utils/serper.py` | Central Serper adapter utility (real API + demo fallback payload) |
 | `utils/firecrawl.py` | Central Firecrawl REST adapter (search, scrape, browser sessions) |
+| `utils/serpapi.py` | Lightweight SerpAPI search adapter |
+| `utils/camoufox.py` | Flexible Camoufox integration: remote server, local Python API, or CLI wrapper |
 | `utils/crawlbase.py` | Central Crawlbase adapter for rendered page fetches |
 | `agents/orchestrator/` | Orchestrator agent — coordinates sub-agents via tool delegation |
 | `agents/planner/` | Planner agent — generates `ResearchPlan` (keywords, hashtags, queries) |
@@ -211,7 +214,9 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 - **Two UI modes**: Chat mode (real-time progress) → auto-switches to Dashboard mode (charts, filters, data table) on completion.
 - **All TypeScript types** in `Interface/src/lib/types.ts` mirror Python Pydantic models in `server/models.py` 1:1. Keep them in sync.
 - **Path alias**: `@/*` maps to `./src/*` in the Interface (configured in `tsconfig.json`). All imports use this.
-- **Demo mode works end-to-end in the web UI**: Backend generates mock data with realistic delays (~9s pipeline), frontend renders it all with charts and tables.
+- **Web demo/live bridge is intentionally boundary-honest**: the server currently exposes planning + harvesting only. Demo mode simulates those two phases, and live mode reads the real planner/harvester SQLite artifacts instead of fabricating scraping or sentiment output.
+- **Web clarification is now resumable**: `ask_human()` can pause a live web session, emit a `clarification_needed` event/message, and resume the blocked agent run when the user replies through the chat UI.
+- **Camoufox now has two roles**: one-shot harvesting helper (`camoufox_fetch_anchors`) and full stateful browser runtime (`agents/tools/browser.py`) with session lifecycle and Playwright-style interactions.
 - **Logs** go to `logs/` (gitignored). If logs aren't appearing, check `LOG_FILE_ENABLED=true` in `.env`.
 - **Data** goes to `data/scrapes/` (gitignored). Each topic gets its own SQLite file.
 - **LangChain v1 API**: Use `create_agent` from `langchain.agents` (NOT `create_react_agent` from `langgraph.prebuilt` — that's deprecated). Pass `system_prompt=` (not `prompt=`).
@@ -222,6 +227,11 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 - **Agent lifecycle status is checkpointed in topic DB**: `agent_status` table tracks `working/retrying/completed/failed`, retry count, last error, and timestamps for resume/debug.
 - **Planner can do tool-based web grounding**: planner runs a tool-calling context pass via `google_search_snippets` (Serper) before producing the structured `ResearchPlan`.
 - **Harvester persistence now uses a two-layer model**: `discovered_links` stores canonical deduplicated URLs, while `link_observations` stores every raw observation from every source. Deduplication happens in the async writer, not in source code.
+- **New harvest sources available**: adapters for SerpAPI (search) and Camoufox (browser discovery) live under `utils/serpapi.py` and `utils/camoufox.py`. The Camoufox helper supports three modes:
+  1. remote HTTP server (`CAMOUFOX_ENDPOINT`),
+  2. local Python package (`pip install camoufox[geoip]`),
+  3. CLI subprocess (will run ``python -m camoufox`` or use ``CAMOUFOX_CLI_PATH``).
+  These sources are enabled with `HARVESTER_ENABLE_SERPAPI`/`_CAMOUFOX` and exposed as agent tools in `agents/tools/harvest.py`.
 - **Harvester writes must go through `AsyncLinkWriter`**: collectors stay fully concurrent, but SQLite writes are serialized through one queue consumer to avoid cross-task write races and to centralize duplicate/quality decisions.
 - **Browser discovery is provider-backed, not local-browser-coupled**: Firecrawl browser sessions are used for rendered search-page link discovery, and Crawlbase is used for seed-page expansion. This keeps browser tech replaceable.
 - **External provider code must be centralized**: keep API-specific logic (Serper, future providers) in `utils/` adapter files and call them from tools/services. Avoid direct HTTP integration scattered across agents.
@@ -231,7 +241,7 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 - **Don't import `langchain_*` directly.** Always go through `BaseLLM`. This is a hard rule.
 - **Don't use `os.getenv()`.** Always use `from env import config`. It logs access and masks secrets.
 - **Don't use `print()` for operational output.** Use `from Logging import get_logger`.
-- **Don't run `npm` or `yarn` in the Interface.** It's Bun-only. `bun install`, `bun dev`, `bun run check`.
+- **Don't run `npm` or `yarn` in the Interface.** It's Bun-only. Use `bun install`, `bun dev`, and `bun run build`.
 - **Don't write multi-line git commit messages with `-m`.** They can fail silently. Use single-line: `git commit -m "type(scope): summary"`
 - **Don't hardcode model names.** They belong in `BaseLLM/_registry.py`.
 
@@ -253,7 +263,7 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 | **Planner checkpoint persistence** (topic SQLite DB with `topic_inputs` + `pipeline_artifacts`) | Summarizer agent |
 | **Tool registry** (@agent_tool, categories) | Scraper agent |
 | **Human-in-the-loop tool** (pluggable backend) | Summarizer agent |
-| **Demo mode** (static data, full pipeline, no LLM) | Live agent→server pipeline bridge |
+| **Demo mode** (static data for planning + harvesting only, no LLM) | HuggingFace sentiment scoring in the web pipeline |
 | **FastAPI backend** (REST + WebSocket + mock data) | |
 | **React dashboard** (TanStack Router/Query, Recharts) | |
 | **Chat UI** (messages, agent progress, adaptive input) | |
@@ -262,6 +272,8 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 | **Mock data generator** (150 posts, 5 platforms, deterministic) | |
 | **Export reports** (JSON / CSV / Markdown download) | |
 | **Version comparison** (structured diff, delta cards, narrative) | |
+| **Live agent→server bridge for planning + harvesting** | |
+| **Web clarification pause/resume flow** | |
 
 ---
 
@@ -489,6 +501,10 @@ class State(TypedDict):
 | `HARVESTER_ENABLE_FIRECRAWL` | No | `true` | Enable Firecrawl search collection |
 | `HARVESTER_ENABLE_BROWSER_DISCOVERY` | No | `true` | Enable Firecrawl remote-browser discovery on rendered search pages |
 | `HARVESTER_ENABLE_CRAWLBASE` | No | `true` | Enable Crawlbase page expansion from high-quality seed URLs |
+| `HARVESTER_ENABLE_SERPAPI` | No | `false` | Enable SerpAPI search collection |
+| `HARVESTER_ENABLE_CAMOUFOX` | No | `false` | Enable Camoufox browser discovery (requires either a server, the Python package, or CLI) |
+| `CAMOUFOX_ENDPOINT` | No | — | URL of a running Camoufox HTTP server; if unset local Python/CLI mode is used. |
+| `CAMOUFOX_CLI_PATH` | No | — | Optional explicit path to the `camoufox` CLI binary (e.g. `/usr/bin/python3 -m camoufox`). |
 | `LOG_LEVEL` | No | `INFO` | Logging level (DEBUG/INFO/WARNING/ERROR) |
 | `LOG_DIR` | No | `logs` | Log output directory |
 | `LOG_FILE_ENABLED` | No | `true` | Enable/disable file logging |
@@ -524,7 +540,7 @@ Per-agent override pattern (optional):
 - **Unit tests**: focus on Service layer logic (prompt formatting, data cleaning, adapter instantiation)
 - **Smoke tests**: verify all imports and adapter creation work (`python -c 'from BaseLLM import get_llm; get_llm("dummy")'`)
 - **Integration tests**: test scraper → SQLite pipeline with mock data
-- **Interface**: `cd Interface && bun test`
+- **Interface**: `cd Interface && bun run build`
 - **Python lint**: `uv run ruff check .`
 
 ### 5 Critical Test Scenarios
@@ -538,9 +554,11 @@ Per-agent override pattern (optional):
 7. `OrchestratorAgent(llm_provider="dummy").invoke("test")` returns structured output with planner data
 8. `list_agents()` returns `["harvester", "orchestrator", "planner"]` — all agents registered
 9. `HarvesterAgent(llm_provider="dummy").invoke("test")` writes canonical links plus observations into `data/scrapes/test.db`
-10. `curl http://localhost:8000/api/health` returns `{"status":"ok"}` — backend server smoke test
-11. Create session → start analysis → check WebSocket events stream correctly
-12. `cd Interface && bun build src/frontend.tsx --outdir=dist` compiles 608 modules without errors
+10. `run_analysis_live(session_id, topic, provider="gemini")` executes the real orchestrator/planner/harvester flow (requires provider + at least one harvest source) and reports harvested-link stats without fabricating sentiment results
+11. `curl http://localhost:8000/api/health` returns `{"status":"ok"}` — backend server smoke test
+12. Create session → start analysis → check WebSocket events stream correctly, including clarification pause/resume when `ask_human()` is invoked
+13. `cd Interface && bun build src/frontend.tsx --outdir=dist` compiles 608 modules without errors
+14. `from utils.camoufox import camoufox_fetch_anchors` should raise a ``RuntimeError`` when no endpoint, package, or CLI is available (covered by tests/test_camoufox.py).
 
 ---
 

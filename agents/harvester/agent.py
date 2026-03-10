@@ -220,10 +220,18 @@ class HarvesterAgent(BaseAgent):
         available_sources = ["serper"]
         from env import config
 
+        # Add any enabled sources depending on configured API keys
         if runtime.enable_firecrawl and config.get("FIRECRAWL_API_KEY"):
             available_sources.append("firecrawl_search")
             if runtime.enable_browser_discovery:
                 available_sources.append("firecrawl_browser")
+        if runtime.enable_serpapi and config.get("SERPAPI_API_KEY"):
+            available_sources.append("serpapi")
+        # camoufox can run as a remote server, local Python package, or CLI,
+        # so we don't require CAMOUFOX_ENDPOINT here; the collector itself will
+        # raise if nothing is usable.  Users still must set the runtime flag.
+        if runtime.enable_camoufox:
+            available_sources.append("camoufox_browser")
 
         prompt_input = {
             "topic": topic,
@@ -319,8 +327,12 @@ class HarvesterAgent(BaseAgent):
             expansion_per_seed_limit=_as_int("HARVESTER_EXPANSION_PER_SEED_LIMIT", 25),
             enable_serper=_as_bool("HARVESTER_ENABLE_SERPER", True),
             enable_firecrawl=_as_bool("HARVESTER_ENABLE_FIRECRAWL", True),
-            enable_browser_discovery=_as_bool("HARVESTER_ENABLE_BROWSER_DISCOVERY", True),
+            enable_browser_discovery=_as_bool(
+                "HARVESTER_ENABLE_BROWSER_DISCOVERY", True
+            ),
             enable_crawlbase=_as_bool("HARVESTER_ENABLE_CRAWLBASE", True),
+            enable_serpapi=_as_bool("HARVESTER_ENABLE_SERPAPI", False),
+            enable_camoufox=_as_bool("HARVESTER_ENABLE_CAMOUFOX", False),
         )
 
     async def _collect_search_batches(
@@ -331,6 +343,7 @@ class HarvesterAgent(BaseAgent):
         runtime: HarvesterRuntimeConfig,
         writer: AsyncLinkWriter,
     ) -> list[Any]:
+        """Execute all harvesting tasks concurrently and record results."""
         source_map: dict[str, CollectorFunc] = {}
         if runtime.enable_serper:
             source_map["serper"] = collect_serper_results
@@ -338,6 +351,16 @@ class HarvesterAgent(BaseAgent):
             source_map["firecrawl_search"] = collect_firecrawl_results
         if runtime.enable_firecrawl and runtime.enable_browser_discovery:
             source_map["firecrawl_browser"] = collect_firecrawl_browser_results
+        if runtime.enable_serpapi:
+            from agents.services.harvester_sources import collect_serpapi_results
+
+            source_map["serpapi"] = collect_serpapi_results
+        if runtime.enable_camoufox:
+            from agents.services.harvester_sources import (
+                collect_camoufox_browser_results,
+            )
+
+            source_map["camoufox_browser"] = collect_camoufox_browser_results
 
         semaphore = asyncio.Semaphore(runtime.max_concurrency)
         results: list[Any] = []

@@ -97,9 +97,14 @@ def build_fallback_harvest_tasks(
 ) -> list[HarvestTaskPlan]:
     """Create deterministic harvesting tasks when LLM planning is unavailable."""
     tasks: list[HarvestTaskPlan] = []
-    source_names = ["serper"]
+    source_names: list[str] = ["serper"]
     if runtime.enable_firecrawl and config.get("FIRECRAWL_API_KEY"):
         source_names.append("firecrawl_search")
+    if runtime.enable_serpapi and config.get("SERPAPI_API_KEY"):
+        source_names.append("serpapi")
+    # camoufox can function locally or via CLI, endpoint not strictly required
+    if runtime.enable_camoufox:
+        source_names.append("camoufox_browser")
 
     for query, platform_hint in _build_platform_queries(brief)[:10]:
         tasks.append(
@@ -231,6 +236,122 @@ async def collect_firecrawl_results(
         links=links,
         warnings=[warning for warning in [data.get("warning")] if warning],
         meta={"credits_used": data.get("creditsUsed")},
+    )
+
+
+async def collect_serpapi_results(
+    task: HarvestTaskPlan,
+    *,
+    brief: ResearchBrief,
+    runtime: HarvesterRuntimeConfig,
+    actor: str,
+) -> HarvestSourceResult:
+    """Collect links using SerpAPI."""
+    if not config.get("SERPAPI_API_KEY"):
+        return HarvestSourceResult(
+            source_name="serpapi",
+            source_type="search",
+            warnings=["SERPAPI_API_KEY is not configured."],
+        )
+    # simple GET request to serpapi.com/search
+    try:
+        params = {
+            "q": task.query,
+            "api_key": config.get("SERPAPI_API_KEY"),
+            "num": min(runtime.per_query_limit, task.target_results),
+        }
+        import requests
+
+        response = requests.get("https://serpapi.com/search", params=params, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+    except Exception as exc:
+        return HarvestSourceResult(
+            source_name="serpapi",
+            source_type="search",
+            warnings=[f"SerpAPI error: {exc}"],
+        )
+    organic = data.get("organic_results", [])
+    links: list[HarvestedLink] = []
+    for index, item in enumerate(organic, start=1):
+        url = item.get("link") or item.get("url") or ""
+        if not normalize_url(url):
+            continue
+        links.append(
+            HarvestedLink(
+                url=url,
+                title=item.get("title", ""),
+                description=item.get("snippet", ""),
+                platform=infer_platform(url, task.platform_hint),
+                source_name="serpapi",
+                source_type="search",
+                discovery_query=task.query,
+                position=index,
+                domain=extract_domain(url),
+                quality_signal=0.15,
+                relevance_signal=0.1,
+                metadata={"engine": "serpapi"},
+                raw_payload=item,
+            )
+        )
+    return HarvestSourceResult(
+        source_name="serpapi",
+        source_type="search",
+        links=links,
+    )
+
+
+async def collect_camoufox_browser_results(
+    task: HarvestTaskPlan,
+    *,
+    brief: ResearchBrief,
+    runtime: HarvesterRuntimeConfig,
+    actor: str,
+) -> HarvestSourceResult:
+    """Collect links using a Camoufox anti-detect browser.
+
+    The underlying helper (:func:`utils.camoufox.camoufox_fetch_anchors`)
+    automatically selects a backend (remote, local Python, CLI) based on
+    configuration.  We simply delegate and translate the result into
+    ``HarvestSourceResult``.
+    """
+    try:
+        from utils.camoufox import camoufox_fetch_anchors
+
+        payload = camoufox_fetch_anchors(task.query, max_links=runtime.per_query_limit)
+        anchors = payload.get("anchors", []) if isinstance(payload, dict) else []
+    except Exception as exc:
+        return HarvestSourceResult(
+            source_name="camoufox_browser",
+            source_type="browser",
+            warnings=[f"Camoufox error: {exc}"],
+        )
+    links: list[HarvestedLink] = []
+    for index, item in enumerate(anchors, start=1):
+        url = item.get("href", "")
+        if not normalize_url(url):
+            continue
+        links.append(
+            HarvestedLink(
+                url=url,
+                title=item.get("title", "") or item.get("text", ""),
+                description="Discovered via Camoufox browser",
+                platform=infer_platform(url, task.platform_hint),
+                source_name="camoufox_browser",
+                source_type="browser",
+                discovery_query=task.query,
+                position=index,
+                domain=extract_domain(url),
+                quality_signal=0.05,
+                relevance_signal=0.05,
+                metadata={"camoufox": True},
+                raw_payload=item,
+            )
+        )
+    return HarvestSourceResult(
+        source_name="camoufox_browser",
+        source_type="browser",
+        links=links,
     )
 
 
@@ -418,6 +539,8 @@ __all__ = [
     "collect_firecrawl_browser_results",
     "collect_firecrawl_results",
     "collect_serper_results",
+    "collect_serpapi_results",
+    "collect_camoufox_browser_results",
     "expand_with_crawlbase",
     "select_expansion_seeds",
 ]
