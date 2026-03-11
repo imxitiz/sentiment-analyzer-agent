@@ -46,7 +46,7 @@ from agents.services import (
     save_planner_plan,
     save_topic_input,
 )
-from agents.tools.search import google_search_snippets
+from agents.tools.search import search_engine_snippets
 from Logging import get_logger
 
 logger = get_logger("agents.planner")
@@ -239,12 +239,14 @@ class PlannerAgent(BaseAgent):
         try:
             research_agent = create_agent(
                 self._llm_adapter.chat_model,
-                tools=[google_search_snippets],
+                tools=[search_engine_snippets],
                 system_prompt=(
                     "You are a research assistant for a planning agent. "
-                    "Use the google_search_snippets tool at least once, then "
+                    "Use the search_engine_snippets tool at least once (you may set"
+                    ' engine="duckduckgo" if you prefer), then '
                     "return concise bullet points of trends, vocabulary, "
                     "and likely hashtags for the topic."
+                    "Call tool multiple times if needed to gather more context, with even different queries/engines.  Focus on breadth of context rather than depth, and keep the output concise."
                 ),
                 name="planner_research",
             )

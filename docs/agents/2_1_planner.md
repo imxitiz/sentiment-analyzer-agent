@@ -22,7 +22,7 @@ Structured `ResearchPlan` output containing:
 1. Ensures per-topic DB exists (`init_topic_db`).
 2. Writes topic input checkpoint (`topic_inputs`).
 3. Runs web-grounding step:
-   - tool-enabled context pass using `google_search_snippets`
+   - tool-enabled context pass using `search_engine_snippets` (can pass `engine="duckduckgo"` for DDG)
    - stores `planner_web_context` checkpoint artifact
 4. Attempts structured LLM output (`with_structured_output(ResearchPlan)`).
 5. If structured output fails, falls back to text response.
@@ -34,7 +34,7 @@ Planner does not call Serper directly.
 
 Layered integration:
 
-- Planner -> `agents/tools/search.py` (`google_search_snippets`)
+- Planner -> `agents/tools/search.py` (`search_engine_snippets`, now multi-engine)
 - Tool -> `utils/serper.py` (`search_google_serper`)
 - Utility -> Serper API (or demo fallback payload)
 
@@ -45,9 +45,11 @@ This keeps provider logic centralized and replaceable.
 Planner checkpoints are saved in per-topic SQLite DB (`data/scrapes/<topic-slug>.db`):
 
 ### `topic_inputs`
+
 - topic + clarification rows (append-only)
 
 ### `pipeline_artifacts`
+
 - planner output fragments by type:
   - `planner_raw_output`
   - `planner_keyword`
@@ -62,6 +64,7 @@ Planner checkpoints are saved in per-topic SQLite DB (`data/scrapes/<topic-slug>
   - fallback/error artifacts where applicable
 
 ### `agent_status`
+
 - `agent_name`, `status`, `retries`, `last_error`
 - `started_at`, `updated_at`, `completed_at`
 - used to support stage-level recovery and resume decisions

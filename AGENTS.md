@@ -142,7 +142,7 @@ Pipeline flow:  Plan → Search → Scrape → Clean → Analyze → Summarize
 | `agents/tools/_registry.py` | `@agent_tool` decorator, tool catalog with categories |
 | `agents/tools/human.py` | Human-in-the-loop tool (CLI input, swappable backend, web clarification bridge) |
 | `agents/tools/browser.py` | Agent-facing Camoufox browser session tools (open/navigate/click/type/extract/evaluate/close) |
-| `agents/tools/search.py` | Tool: `google_search_snippets` (Serper API top results for planner context) |
+| `agents/tools/search.py` | Tool: `search_engine_snippets` (Serper API for Google + optional DuckDuckGo support) |
 | `agents/tools/harvest.py` | Reusable harvest tools for Firecrawl search/browser and Crawlbase page fetch |
 | `utils/serper.py` | Central Serper adapter utility (real API + demo fallback payload) |
 | `utils/firecrawl.py` | Central Firecrawl REST adapter (search, scrape, browser sessions) |
@@ -180,7 +180,7 @@ Pipeline flow:  Plan → Search → Scrape → Clean → Analyze → Summarize
 | `server/services/pipeline.py` | Pipeline runner bridge (demo + live modes) |
 | `server/services/__init__.py` | Mock data generator (`generate_mock_result()`) |
 | `Interface/` | **Frontend** — Bun + React + TanStack + Recharts + shadcn/ui |
-| `docs/agents/` | Agent-by-agent architecture docs (orchestrator/planner and future agents) |
+| `docs/agents/` | Agent-by-agent architecture docs (orchestrator/planner/... and future agents) |
 | `docs/FEATURES.md` | Detailed feature documentation (export, compare, versioning) |
 | `data/scrapes/` | SQLite DBs per topic (gitignored) |
 | `logs/` | Rotating log files (gitignored) |
@@ -238,7 +238,7 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 - **Planner persistence is append-only and shared across demo/live**: every run creates/uses `data/scrapes/<topic>.db` and writes both user/topic inputs + planner artifacts, so crashes are debuggable and resumable.
 - **Topic DB bootstrap is now orchestrator-owned**: when topic is received, orchestrator first writes to central `orchestrator.db` (`topic_runs`) and initializes topic DB before planner invocation.
 - **Agent lifecycle status is checkpointed in topic DB**: `agent_status` table tracks `working/retrying/completed/failed`, retry count, last error, and timestamps for resume/debug.
-- **Planner can do tool-based web grounding**: planner runs a tool-calling context pass via `google_search_snippets` (Serper) before producing the structured `ResearchPlan`.
+- **Planner can do tool-based web grounding**: planner runs a tool-calling context pass via `search_engine_snippets` (Serper or DuckDuckGo engine) before producing the structured `ResearchPlan`.  The tool accepts an ``engine`` parameter so you can experiment with ``"duckduckgo"`` for alternative search results.
 - **Harvester persistence now uses a two-layer model**: `discovered_links` stores canonical deduplicated URLs, while `link_observations` stores every raw observation from every source. Deduplication happens in the async writer, not in source code.
 - **New harvest sources available**: adapters for SerpAPI (search) and Camoufox (browser discovery) live under `utils/serpapi.py` and `utils/camoufox.py`. The Camoufox helper supports three modes:
   1. remote HTTP server (`CAMOUFOX_ENDPOINT`),

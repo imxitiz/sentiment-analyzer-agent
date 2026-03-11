@@ -41,7 +41,7 @@ from .browser import (
     camoufox_open_browser,
     camoufox_type_browser,
 )
-from .search import google_search_snippets
+from .search import search_engine_snippets
 
 __all__ = [
     "ToolEntry",
@@ -67,5 +67,5 @@ __all__ = [
     "get_tools_by_category",
     "list_tools",
     "list_categories",
-    "google_search_snippets",
+    "search_engine_snippets",
 ]

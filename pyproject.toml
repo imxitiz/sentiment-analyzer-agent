@@ -24,6 +24,8 @@ dependencies = [
     "pymongo>=4.12",
     "beautifulsoup4>=4.13",
     "lxml>=5.3",
+    "duckduckgo-search>=2.7.1",
+    "langchain-community>=0.1.0",
 ]
 
 [tool.pyrefly]
