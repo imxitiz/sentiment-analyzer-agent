@@ -6,6 +6,8 @@ This folder tracks the implemented and planned behavior of each pipeline agent.
 
 - [1_orchestrator.md](./1_orchestrator.md): intake, orchestration flow, run lifecycle, DB bootstrap.
 - [2_1_planner.md](./2_1_planner.md): planning behavior, web-grounded context, persistence schema, fallback behavior.
+- [2_2_harvester.md](./2_2_harvester.md): link collection, multi-source fan-out, AsyncLinkWriter, URL normalization, quality scoring, SQLite schema.
+- [2_3_scraper.md](./2_3_scraper.md): deep extraction, platform-aware backend routing, ScraperRecoveryAgent sub-agent, MongoDB document schema, dual persistence.
 
 ## Documentation rule
 
