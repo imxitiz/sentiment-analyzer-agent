@@ -160,6 +160,12 @@ Pipeline flow:  Plan → Search → Scrape → Clean → Analyze → Summarize
 | `agents/scraper/` | **Scraper agent** — deep extraction from harvested URLs via multi-backend pipeline |
 | `agents/scraper/models.py` | `ScrapeTarget`, `ScrapedContent`, `ScrapeRuntimeConfig`, `RecoveryPlan` |
 | `agents/scraper/recovery.py` | Recovery sub-agent — AI-assisted backend fallback selection on scrape failures |
+| `agents/cleaner/` | **Cleaner agent** — deterministic text normalization + dedupe + QA fallback before sentiment |
+| `agents/cleaner/models.py` | `CleaningRuntimeConfig`, `CleanerResult`, `CleanerPlan`, `CleanerRecoveryPlan` |
+| `agents/cleaner/planner.py` | Planner sub-agent — per-topic adaptive cleaning plan generation from sampled raw docs |
+| `agents/cleaner/recovery.py` | Recovery sub-agent — limited LLM fallback/review for failed or sampled clean outputs |
+| `agents/services/cleaner_text.py` | Adaptive deterministic cleaning pipeline (multi-backend extraction, emoji meaning, contractions, quality gates, language checks) |
+| `agents/services/cleaner_store.py` | Mongo cleaner persistence (`cleaned_documents`, `clean_runs`) + runtime config loader + optional fuzzy near-dedupe lookup |
 | `agents/<name>/prompts/` | Agent-local prompt templates (`system.txt`, etc.) |
 | `BaseLLM/` | Unified LLM abstraction layer (Gemini, Ollama, OpenAI, Dummy) |
 | `BaseLLM/adapter.py` | `BaseLLMAdapter` ABC — DRY base with sync/async generate |
@@ -227,7 +233,7 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 - **Two UI modes**: Chat mode (real-time progress) → auto-switches to Dashboard mode (charts, filters, data table) on completion.
 - **All TypeScript types** in `Interface/src/lib/types.ts` mirror Python Pydantic models in `server/models.py` 1:1. Keep them in sync.
 - **Path alias**: `@/*` maps to `./src/*` in the Interface (configured in `tsconfig.json`). All imports use this.
-- **Web demo/live bridge is intentionally boundary-honest**: the server currently exposes planning + harvesting only. Demo mode simulates those two phases, and live mode reads the real planner/harvester SQLite artifacts instead of fabricating scraping or sentiment output.
+- **Web demo/live bridge is intentionally boundary-honest**: the server currently exposes planning + harvesting + scraping + cleaning. Demo mode simulates full pipeline phases, and live mode reads real planner/harvester/scraper/cleaner artifacts instead of fabricating sentiment output.
 - **Web clarification is now resumable**: `ask_human()` can pause a live web session, emit a `clarification_needed` event/message, and resume the blocked agent run when the user replies through the chat UI.
 - **Camoufox now has two roles**: one-shot harvesting helper (`camoufox_fetch_anchors`) and full stateful browser runtime (`agents/tools/browser.py`) with session lifecycle and Playwright-style interactions.
 - **Logs** go to `logs/` (gitignored). If logs aren't appearing, check `LOG_FILE_ENABLED=true` in `.env`.
@@ -258,6 +264,14 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 - **Scraper service files use `TYPE_CHECKING` imports**: to break the `agents.services → agents.scraper.models → agents.scraper.agent → agents.services` circular import, the service modules (`scraper_store.py`, `scraper_sources.py`, `document_store.py`) import scraper models under `TYPE_CHECKING` and add deferred runtime imports in functions that construct model objects.
 - **Scraper backend enablement now has one preferred source of truth**: use `SCRAPER_ENABLED_BACKENDS=generic_http,firecrawl,crawlbase,camoufox`. Legacy per-backend flags (`SCRAPER_ENABLE_*`) are still honored for backward compatibility, but new backend additions should go through `agents/services/scraper_runtime.py` first.
 - **Scraper env vars**: `SCRAPER_MAX_CONCURRENCY`, `SCRAPER_SOURCE_TIMEOUT_SECONDS`, `SCRAPER_MAX_TARGETS_PER_RUN`, `SCRAPER_MAX_RETRIES_PER_TARGET`, `SCRAPER_ALLOW_EXISTING_REUSE`, `SCRAPER_REUSE_EXISTING_DAYS`, `SCRAPER_ENABLED_BACKENDS`, plus legacy `SCRAPER_ENABLE_GENERIC_HTTP`, `SCRAPER_ENABLE_FIRECRAWL`, `SCRAPER_ENABLE_CRAWLBASE`, `SCRAPER_ENABLE_CAMOUFOX`.
+- **CleanerAgent is deterministic-first and cost-aware**: bulk cleaning is done in Python, and LLM calls are only used for failed records or sampled QA checks (`CLEANER_LLM_FALLBACK_ENABLED`).
+- **Cleaner now has a planning sub-agent path**: when `CLEANER_LLM_PLAN_ENABLED=true`, `CleanerPlannerAgent` samples raw docs once per run and returns a structured `CleanerPlan` used to override deterministic runtime knobs.
+- **Cleaner persistence is dual-layer in Mongo**: source documents in `scraped_documents` are updated with `cleaning` payload + `analysis_state.cleaning`, and sentiment-ready projections are upserted into `cleaned_documents`.
+- **Emoji handling preserves sentiment**: emojis are converted to semantic tokens via `emoji.demojize` (for example, 😡 → "enraged face") instead of being dropped.
+- **Cleaner extraction is backend-scored and adaptive**: cleaner can evaluate `content_fields`, `trafilatura`, `readability`, and `bs4` candidates, then pick the highest-quality source before normalization.
+- **Cleaner run telemetry**: each run writes `clean_runs` with runtime config + optional `plan` + stats (`accepted`, `duplicate`, `too_short`, `failed`, fallback usage, sampled reviews, plan confidence) and is surfaced in web live pipeline events.
+- **Near-duplicate suppression is optional and package-aware**: fuzzy dedupe uses RapidFuzz if available (`CLEANER_ENABLE_FUZZY_DEDUPE`), and gracefully degrades when the dependency is not installed.
+- **Cleaner dependencies**: `ftfy` (Unicode/mojibake repair), `emoji` (emoji-to-text conversion), and `contractions` (expansion) were added to `pyproject.toml`.
 - **MongoDB connection**: `utils/mongodb.py` provides a lazy singleton `MongoClient`. Config via `MONGODB_URI` (full URI) or `MONGODB_HOST`+`MONGODB_PORT`. Database name via `MONGODB_DATABASE` (default: `sentiment_analyzer`). `pymongo>=4.12` is required.
 - **Mongo document indexes now include reuse/search helpers**: both `scrape_targets` and `scraped_documents` store `normalized_url_hash` and index it; documents also index `document_id`, `authors.name`, `references.url`, `content_items.item_id`, and `(topic_slugs, platform, published_at)` for downstream filtering and reuse lookup.
 
@@ -277,7 +291,7 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 | BaseLLM adapters (Gemini, Ollama, OpenAI, Dummy) | HuggingFace sentiment model integration |
 | Production structured logging | Vector DB (FAISS/Pinecone) |
 | EnvConfig singleton | Convex DB / real-time layer |
-| Prompt template manager (global + agent-local) | Data cleaning agent |
+| Prompt template manager (global + agent-local) | Additional platform scrapers (Twitter/X, TikTok, news sites) |
 | Serper web search | RAG chat interface (placeholder only) |
 | SQLite link storage | Evaluation suite |
 | **Multi-agent framework** (BaseAgent, registries) | Summarizer agent |
@@ -285,6 +299,7 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 | **PlannerAgent** (structured output → ResearchPlan) | |
 | **HarvesterAgent** (structured output → `HarvestPlan`, async fan-out, queued SQLite writes) | |
 | **ScraperAgent** (multi-backend deep extraction, recovery sub-agent, MongoDB persistence) | |
+| **CleanerAgent** (async deterministic cleaning, duplicate/quality filtering, limited LLM fallback + sampled QA) | |
 | **Agent resilience runtime** (timeout + retry + circuit breaker in `BaseAgent`) | |
 | **Planner checkpoint persistence** (topic SQLite DB with `topic_inputs` + `pipeline_artifacts`) | |
 | **Tool registry** (@agent_tool, categories) | |
@@ -299,7 +314,7 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 | **Mock data generator** (150 posts, 5 platforms, deterministic) | |
 | **Export reports** (JSON / CSV / Markdown download) | |
 | **Version comparison** (structured diff, delta cards, narrative) | |
-| **Live agent→server bridge for planning + harvesting + scraping** | |
+| **Live agent→server bridge for planning + harvesting + scraping + cleaning** | |
 | **Web clarification pause/resume flow** | |
 
 ---
@@ -543,6 +558,32 @@ class State(TypedDict):
 | `SCRAPER_ENABLE_FIRECRAWL` | No | `true` | Legacy toggle for Firecrawl scraping |
 | `SCRAPER_ENABLE_CRAWLBASE` | No | `true` | Legacy toggle for Crawlbase rendered fetching |
 | `SCRAPER_ENABLE_CAMOUFOX` | No | `true` | Legacy toggle for Camoufox browser scraping |
+| `CLEANER_MAX_CONCURRENCY` | No | `8` | Maximum concurrent cleaner workers |
+| `CLEANER_MAX_DOCUMENTS_PER_RUN` | No | `500` | Maximum raw documents pulled from Mongo in one cleaner run |
+| `CLEANER_SAMPLE_REVIEW_RATE` | No | `0.05` | Fraction of accepted documents sent to LLM QA review |
+| `CLEANER_MAX_SAMPLE_REVIEWS` | No | `20` | Cap on sampled QA reviews per run |
+| `CLEANER_MIN_CLEAN_CHARS` | No | `30` | Minimum cleaned text length before `too_short` status |
+| `CLEANER_MAX_CLEAN_CHARS` | No | `12000` | Max cleaned text length retained for sentiment input |
+| `CLEANER_REMOVE_PUNCTUATION` | No | `true` | Remove punctuation during sentiment-text normalization |
+| `CLEANER_LOWERCASE_TEXT` | No | `true` | Lowercase cleaned text |
+| `CLEANER_REPLACE_URLS_WITH_TOKEN` | No | `true` | Replace URLs with `<url>` token |
+| `CLEANER_REPLACE_MENTIONS_WITH_TOKEN` | No | `true` | Replace social mentions with `@user` token |
+| `CLEANER_PRESERVE_CASE_FOR_SHOUTING` | No | `false` | Keep casing to preserve emphasis cues (reserved for future heuristics) |
+| `CLEANER_EXTRACTION_BACKENDS` | No | `content_fields,trafilatura,readability,bs4` | Ordered extraction candidates for adaptive source selection |
+| `CLEANER_MIN_ALPHA_RATIO` | No | `0.35` | Reject cleaned text with too few alphabetic characters |
+| `CLEANER_MAX_URL_RATIO` | No | `0.3` | Reject cleaned text overly dominated by URL-like fragments |
+| `CLEANER_MAX_SYMBOL_RATIO` | No | `0.35` | Reject cleaned text overly dominated by symbols/punctuation |
+| `CLEANER_REJECT_NON_PREFERRED_LANGUAGES` | No | `false` | Reject texts whose detected language is outside preferred list |
+| `CLEANER_PREFERRED_LANGUAGES` | No | `en` | Comma-separated preferred languages for optional filtering |
+| `CLEANER_ENABLE_FUZZY_DEDUPE` | No | `true` | Enable near-duplicate filtering over accepted cleaned docs |
+| `CLEANER_FUZZY_DEDUPE_THRESHOLD` | No | `93.0` | Minimum RapidFuzz score for near-duplicate classification |
+| `CLEANER_FUZZY_CANDIDATE_LIMIT` | No | `250` | Max recent accepted docs scanned for fuzzy dedupe |
+| `CLEANER_LLM_PLAN_ENABLED` | No | `true` | Enable CleanerPlannerAgent to produce per-run adaptive plan overrides |
+| `CLEANER_LLM_PLAN_SAMPLE_SIZE` | No | `24` | Number of pending docs sampled to generate cleaner plan |
+| `CLEANER_LLM_PLAN_MAX_CHARS_PER_SAMPLE` | No | `1600` | Per-sample preview length for planner payload |
+| `CLEANER_LLM_FALLBACK_MAX_CHARS` | No | `2200` | Max preview chars sent to CleanerRecoveryAgent |
+| `CLEANER_LLM_FORCE_FULL_REWRITE` | No | `false` | Hint recovery agent to fully rewrite instead of lightly editing |
+| `CLEANER_LLM_FALLBACK_ENABLED` | No | `true` | Enable LLM fallback/review for failed/sample clean results |
 | `LOG_LEVEL` | No | `INFO` | Logging level (DEBUG/INFO/WARNING/ERROR) |
 | `LOG_DIR` | No | `logs` | Log output directory |
 | `LOG_FILE_ENABLED` | No | `true` | Enable/disable file logging |
@@ -590,9 +631,9 @@ Per-agent override pattern (optional):
 5. `prepare_db_for_topic("test")` creates SQLite DB at `data/scrapes/test.db`
 6. `uv run python main.py --demo -t "test"` runs full pipeline with static data (exit 0)
 7. `OrchestratorAgent(llm_provider="dummy").invoke("test")` returns structured output with planner data
-8. `list_agents()` returns `["harvester", "orchestrator", "planner"]` — all agents registered
+8. `list_agents()` returns `["cleaner", "harvester", "orchestrator", "planner", "scraper"]` — all core agents registered
 9. `HarvesterAgent(llm_provider="dummy").invoke("test")` writes canonical links plus observations into `data/scrapes/test.db`
-10. `run_analysis_live(session_id, topic, provider="gemini")` executes the real orchestrator/planner/harvester flow (requires provider + at least one harvest source) and reports harvested-link stats without fabricating sentiment results
+10. `run_analysis_live(session_id, topic, provider="gemini")` executes the real orchestrator/planner/harvester/scraper/cleaner flow (requires provider + harvest + scraper readiness) and reports cleaned-doc stats without fabricating sentiment results
 11. `curl http://localhost:8000/api/health` returns `{"status":"ok"}` — backend server smoke test
 12. Create session → start analysis → check WebSocket events stream correctly, including clarification pause/resume when `ask_human()` is invoked
 13. `cd Interface && bun build src/frontend.tsx --outdir=dist` compiles 608 modules without errors
@@ -831,15 +872,15 @@ Prioritized roadmap. Each item is a meaningful chunk of work (1-2 sessions).
    - Create `SentimentAnalyzer/` module with adapter pattern like BaseLLM
    - Must run locally, fast inference, no API costs
 
-4. **Implement data cleaning pipeline**
-   - Deduplication, spam filtering, text normalization
-   - Can use cheap LLM for relevance filtering
-   - Input: raw scraped data → Output: cleaned data ready for sentiment
+4. ~~**Implement data cleaning pipeline**~~ ✅ DONE
+   - `CleanerAgent` now performs async deterministic cleaning with bounded concurrency
+   - Includes HTML/text extraction, emoji-to-meaning conversion, contraction expansion, URL/punctuation normalization, dedupe, and short-content filtering
+   - Limited LLM use: fallback on failures and sampled QA reviews only
+   - Persists cleaned output to Mongo (`scraped_documents.cleaning` + `cleaned_documents`)
 
-5. **Add MongoDB for raw scraped data**
-   - Replace or augment SQLite for storing actual post content
-   - SQLite stays for link discovery queue only
-   - MongoDB stores unstructured content with max metadata
+5. ~~**Add MongoDB for raw scraped data**~~ ✅ DONE
+   - SQLite remains queue/checkpoint storage for harvesting/scraping orchestration
+   - MongoDB stores reusable schema-rich raw documents and phase outputs
 
 6. **Add Vector DB (FAISS/Pinecone) for embeddings**
    - Embed cleaned text for semantic search

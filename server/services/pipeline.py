@@ -20,7 +20,12 @@ import asyncio
 import json
 import sqlite3
 
-from agents.services import db_path_for_topic, load_latest_scrape_stats, load_research_brief
+from agents.services import (
+    db_path_for_topic,
+    load_latest_clean_stats,
+    load_latest_scrape_stats,
+    load_research_brief,
+)
 from agents.tools.human import clear_human_input_handler, set_human_input_handler
 from server.config import server_config
 from server.models import (
@@ -338,13 +343,14 @@ def _build_web_human_handler(session_id: str, loop: asyncio.AbstractEventLoop):
 async def run_analysis_live(session_id: str, topic: str, provider: str = "gemini", model: str | None = None) -> None:
     """Run the currently implemented live pipeline (requires API keys).
 
-        This bridge should only reflect real implemented phases. Right now that is:
-      1. Orchestrator
-      2. Planner
-      3. Harvester
-            4. Scraper
+    This bridge should only reflect real implemented phases. Right now that is:
+        1. Orchestrator
+        2. Planner
+        3. Harvester
+        4. Scraper
+        5. Cleaner
 
-        It should not fabricate cleaning or sentiment-analysis results.
+    It should not fabricate sentiment-analysis results.
     """
     can_run_live, sources, reasons = _live_readiness(provider)
     if not can_run_live:
@@ -440,30 +446,64 @@ async def run_analysis_live(session_id: str, topic: str, provider: str = "gemini
     reused_documents = (
         reused_documents_value if isinstance(reused_documents_value, int) else 0
     )
+
+    cleaned_stats = load_latest_clean_stats(topic)
+    cleaned_documents_value = (
+        cleaned_stats.get("accepted", 0) if isinstance(cleaned_stats, dict) else 0
+    )
+    cleaned_documents = (
+        cleaned_documents_value if isinstance(cleaned_documents_value, int) else 0
+    )
+    duplicate_documents_value = (
+        cleaned_stats.get("duplicate", 0) if isinstance(cleaned_stats, dict) else 0
+    )
+    duplicate_documents = (
+        duplicate_documents_value if isinstance(duplicate_documents_value, int) else 0
+    )
+    too_short_value = (
+        cleaned_stats.get("too_short", 0) if isinstance(cleaned_stats, dict) else 0
+    )
+    too_short_documents = too_short_value if isinstance(too_short_value, int) else 0
+    if cleaned_stats is not None:
+        await session_manager.update_status(session_id, SessionStatus.CLEANING)
+        await _emit(
+            session_id,
+            AgentEventType.AGENT_COMPLETE,
+            "cleaner",
+            "Cleaner completed preprocessing and normalization.",
+            stats=cleaned_stats,
+        )
+
     await session_manager.add_message(
         session_id,
         MessageRole.ASSISTANT,
         (
-            f"Planning, harvesting, and scraping finished for **{topic}**.\n\n"
+            f"Planning, harvesting, scraping, and cleaning finished for **{topic}**.\n\n"
             f"- Keywords planned: {planned_keywords}\n"
             f"- Search queries planned: {planned_queries}\n"
             f"- Candidate links harvested: {harvested_links}\n\n"
             f"- Raw documents scraped: {scraped_documents}\n"
             f"- Existing documents reused: {reused_documents}\n\n"
-            f"Cleaning and sentiment scoring are not implemented yet, so no sentiment summary was produced."
+            f"- Cleaned documents accepted: {cleaned_documents}\n"
+            f"- Duplicate documents skipped: {duplicate_documents}\n"
+            f"- Too-short documents skipped: {too_short_documents}\n\n"
+            f"Sentiment scoring is not implemented yet, so no sentiment summary was produced."
         ),
         metadata={
             "kind": "pipeline_boundary",
-            "phase": "scraping",
+            "phase": "cleaning",
         },
     )
     await _emit(session_id, AgentEventType.PIPELINE_COMPLETE, "orchestrator",
-                "Planning, harvesting, and scraping pipeline complete",
+                "Planning, harvesting, scraping, and cleaning pipeline complete",
                 summary={
-                    "phase": "scraping",
+                    "phase": "cleaning",
                     "stored_links": harvested_links,
                     "scraped_documents": scraped_documents,
                     "reused_documents": reused_documents,
+                    "cleaned_documents": cleaned_documents,
+                    "duplicate_documents": duplicate_documents,
+                    "too_short_documents": too_short_documents,
                     "keywords": planned_keywords,
                     "queries": planned_queries,
                 })

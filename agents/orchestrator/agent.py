@@ -75,6 +75,7 @@ class OrchestratorAgent(BaseAgent):
             **kwargs: Forwarded to ``BaseAgent.__init__``.
         """
         if sub_agents is None:
+            from agents.cleaner.agent import CleanerAgent
             from agents.harvester.agent import HarvesterAgent
             from agents.planner.agent import PlannerAgent
             from agents.scraper.agent import ScraperAgent
@@ -86,6 +87,7 @@ class OrchestratorAgent(BaseAgent):
                 PlannerAgent(**forwarded),
                 HarvesterAgent(**forwarded),
                 ScraperAgent(**forwarded),
+                CleanerAgent(**forwarded),
             ]
 
         self._sub_agents = sub_agents

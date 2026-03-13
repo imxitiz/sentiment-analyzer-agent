@@ -70,6 +70,7 @@ def main() -> None:
             provider = "dummy"
 
     from agents.orchestrator import OrchestratorAgent
+    from agents.cleaner import CleanerAgent
     from agents.harvester import HarvesterAgent
     from agents.planner import PlannerAgent
     from agents.scraper import ScraperAgent
@@ -82,10 +83,11 @@ def main() -> None:
     planner = PlannerAgent(llm_provider=provider)
     harvester = HarvesterAgent(llm_provider=provider)
     scraper = ScraperAgent(llm_provider=provider)
+    cleaner = CleanerAgent(llm_provider=provider)
 
     # Create orchestrator (powerful model for coordination)
     orchestrator = OrchestratorAgent(
-        sub_agents=[planner, harvester, scraper],
+        sub_agents=[planner, harvester, scraper, cleaner],
         llm_provider=provider,
         model=model,
     )
