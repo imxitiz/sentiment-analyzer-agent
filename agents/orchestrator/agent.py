@@ -61,6 +61,7 @@ class OrchestratorAgent(BaseAgent):
     _system_prompt_file = "system.txt"
     _llm_provider = "google"
     _llm_model = "gemini-2.5-pro"
+    _mcp_enabled = True
 
     def __init__(
         self,

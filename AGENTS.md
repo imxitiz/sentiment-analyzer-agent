@@ -140,6 +140,10 @@ Pipeline flow:  Plan → Search → Scrape → Clean → Analyze → Summarize
 | `agents/services/scraper_sources.py` | Scraping backends: generic HTTP + platform-specialized paths (Reddit, Bluesky, YouTube, Hacker News, RSS) + rendered fallbacks (Firecrawl, Crawlbase, Camoufox) |
 | `agents/services/document_store.py` | MongoDB document store abstraction (ABC + Mongo impl) for scraped raw documents |
 | `agents/tools/_registry.py` | `@agent_tool` decorator, tool catalog with categories |
+| `agents/tools/mcp/` | MCP registry + loader + built-in server definitions |
+| `agents/tools/mcp/registry.py` | MCP server registry + config normalization (stdio/http) |
+| `agents/tools/mcp/loader.py` | MCP tools/resources/prompts loader (LangChain MCP adapters) |
+| `agents/tools/mcp/servers/` | Built-in MCP server registrations (examples) |
 | `agents/tools/human.py` | Human-in-the-loop tool (CLI input, swappable backend, web clarification bridge) |
 | `agents/tools/browser.py` | Agent-facing Camoufox browser session tools (open/navigate/click/type/extract/evaluate/close) |
 | `agents/tools/search.py` | Tool: `search_engine_snippets` (Serper API for Google + optional DuckDuckGo support) |
@@ -188,6 +192,7 @@ Pipeline flow:  Plan → Search → Scrape → Clean → Analyze → Summarize
 | `Interface/` | **Frontend** — Bun + React + TanStack + Recharts + shadcn/ui |
 | `docs/agents/` | Agent-by-agent architecture docs (orchestrator/planner/... and future agents) |
 | `docs/FEATURES.md` | Detailed feature documentation (export, compare, versioning) |
+| `docs/MCP.md` | MCP integration guide (stdio/http, config, examples) |
 | `data/scrapes/` | SQLite DBs per topic (gitignored) |
 | `logs/` | Rotating log files (gitignored) |
 | `docs/VISION.md` | **Canonical project vision** — full pipeline, architecture, what's built vs planned |
@@ -222,6 +227,7 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 - **`BaseLLM/_registry.py`** is the single source of truth for all model names, providers, and aliases. If you need to add a model, start there.
 - **`agents/_registry.py`** auto-registers agents by their `_name` via `@register_agent` decorator. Import the agent module → it's registered.
 - **`agents/tools/_registry.py`** auto-registers tools via `@agent_tool(category="...")` decorator. Category-based discovery.
+- **MCP tool integration**: register MCP servers in `agents/tools/mcp/registry.py`, then load tools with `load_mcp_tools()`; optional JSON config via `MCP_CONFIG_PATH`. Built-in examples live in `agents/tools/mcp/servers/`.
 - **Agent execution modes**: `react` (has tools → LangGraph tool-calling loop), `direct` (no tools → single LLM call), `demo` (no LLM → static data).
 - **Demo mode**: Set `provider="dummy"` or use `--demo` CLI flag. Each agent's `_demo_invoke()` returns realistic static data. The full pipeline runs — only the data is synthetic.
 - **Prompt resolution order**: agent-local `prompts/` dir → global `prompts/raw_prompts/`. Agent prompts live alongside the agent code, global prompts are shared templates.
@@ -303,6 +309,7 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 | **Agent resilience runtime** (timeout + retry + circuit breaker in `BaseAgent`) | |
 | **Planner checkpoint persistence** (topic SQLite DB with `topic_inputs` + `pipeline_artifacts`) | |
 | **Tool registry** (@agent_tool, categories) | |
+| **MCP tool integration** (stdio/http via langchain-mcp-adapters) | |
 | **Human-in-the-loop tool** (pluggable backend) | |
 | **MongoDB integration** (utils/mongodb.py + document store abstraction) | |
 | **Demo mode** (static data for planning + harvesting + scraping, no LLM) | |

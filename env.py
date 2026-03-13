@@ -65,6 +65,8 @@ class EnvConfig:
         # servers or fetching the browser.  This is useful when a virtualenv or
         # container has several pythons in play.
         "CAMOUFOX_CLI_PATH": None,
+        # Optional MCP config file path (Claude-style mcpServers JSON)
+        "MCP_CONFIG_PATH": None,
         "OLLAMA_BASE_URL": "http://localhost:11434",
         # Agent runtime resilience defaults
         "AGENT_TIMEOUT_SECONDS": "300",

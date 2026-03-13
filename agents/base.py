@@ -81,6 +81,9 @@ class BaseAgent(ABC):
     _max_retries: int | None = None
     _circuit_breaker_threshold: int | None = None
     _circuit_breaker_cooldown_seconds: int | None = None
+    _mcp_enabled: bool = False
+    _mcp_server_names: list[str] | None = None
+    _mcp_strict: bool = False
 
     def __init__(
         self,
@@ -90,6 +93,9 @@ class BaseAgent(ABC):
         temperature: float = 0.7,
         max_tokens: int = 4096,
         extra_tools: list | None = None,
+        mcp_enabled: bool | None = None,
+        mcp_server_names: list[str] | None = None,
+        mcp_strict: bool | None = None,
         system_prompt: str | None = None,
         **llm_kwargs: Any,
     ) -> None:
@@ -101,6 +107,9 @@ class BaseAgent(ABC):
             temperature: LLM sampling temperature.
             max_tokens: Maximum tokens for LLM generation.
             extra_tools: Additional tools beyond ``_register_tools()``.
+            mcp_enabled: Whether to load MCP tools for this agent.
+            mcp_server_names: Optional subset of MCP server names to load.
+            mcp_strict: If true, MCP load failures raise instead of warning.
             system_prompt: Override system prompt (skip file loading).
             **llm_kwargs: Forwarded to ``get_llm()``.
         """
@@ -115,6 +124,11 @@ class BaseAgent(ABC):
             **llm_kwargs,
         )
         self._extra_tools = extra_tools or []
+        self._mcp_enabled = self._mcp_enabled if mcp_enabled is None else mcp_enabled
+        self._mcp_server_names = (
+            self._mcp_server_names if mcp_server_names is None else mcp_server_names
+        )
+        self._mcp_strict = self._mcp_strict if mcp_strict is None else mcp_strict
         self._system_prompt_override = system_prompt
         self._resolved_timeout_seconds = self._resolve_int_setting(
             key_name="TIMEOUT_SECONDS",
@@ -182,6 +196,8 @@ class BaseAgent(ABC):
                 "max_retries": self._resolved_max_retries,
                 "circuit_breaker_threshold": self._resolved_circuit_breaker_threshold,
                 "circuit_breaker_cooldown_seconds": self._resolved_circuit_breaker_cooldown_seconds,
+                "mcp_enabled": self._mcp_enabled,
+                "mcp_servers": self._mcp_server_names or "all",
             },
         )
 
@@ -196,7 +212,30 @@ class BaseAgent(ABC):
 
     def _collect_tools(self) -> list:
         """Merge registered tools with extra tools passed at init."""
-        return self._register_tools() + self._extra_tools
+        tools = list(self._register_tools()) + list(self._extra_tools)
+        if self._mcp_enabled:
+            tools.extend(self._load_mcp_tools())
+        return tools
+
+    def _load_mcp_tools(self) -> list:
+        """Load MCP tools if enabled."""
+        try:
+            from agents.tools.mcp import load_mcp_tools
+
+            return load_mcp_tools(
+                server_names=self._mcp_server_names,
+                strict=self._mcp_strict,
+                register=True,
+            )
+        except Exception as exc:
+            self._log.warning(
+                "MCP tools unavailable: %s",
+                exc,
+                action="mcp_load_failed",
+            )
+            if self._mcp_strict:
+                raise
+            return []
 
     # ── Prompt resolution ────────────────────────────────────────────
 
