@@ -78,11 +78,17 @@ def build_backend_plan(target: ScrapeTarget, runtime: ScrapeRuntimeConfig) -> li
         plan.append("reddit_json")
         plan.extend(["generic_http", "firecrawl", "camoufox", "crawlbase"])
     elif platform == "bluesky":
-        plan.extend(["bluesky_public", "firecrawl", "camoufox", "generic_http", "crawlbase"])
+        plan.extend(
+            ["bluesky_public", "firecrawl", "camoufox", "generic_http", "crawlbase"]
+        )
     elif platform in {"youtube"}:
-        plan.extend(["youtube_oembed", "generic_http", "firecrawl", "crawlbase", "camoufox"])
+        plan.extend(
+            ["youtube_oembed", "generic_http", "firecrawl", "crawlbase", "camoufox"]
+        )
     elif platform == "hackernews":
-        plan.extend(["hackernews_api", "generic_http", "firecrawl", "crawlbase", "camoufox"])
+        plan.extend(
+            ["hackernews_api", "generic_http", "firecrawl", "crawlbase", "camoufox"]
+        )
     elif platform == "rss":
         plan.extend(["rss_feed", "generic_http", "firecrawl", "crawlbase"])
     elif platform in {"facebook", "instagram", "tiktok", "x", "twitter"}:
@@ -92,7 +98,17 @@ def build_backend_plan(target: ScrapeTarget, runtime: ScrapeRuntimeConfig) -> li
 
     filtered: list[str] = []
     for backend in plan:
-        if backend in {"reddit_json", "bluesky_public", "youtube_oembed", "hackernews_api", "rss_feed"} or backend in available:
+        if (
+            backend
+            in {
+                "reddit_json",
+                "bluesky_public",
+                "youtube_oembed",
+                "hackernews_api",
+                "rss_feed",
+            }
+            or backend in available
+        ):
             if backend not in filtered:
                 filtered.append(backend)
     return filtered
@@ -251,7 +267,8 @@ def _extract_html_payload(
     author = _meta_content(soup, "author", "article:author")
     published_at = _meta_content(soup, "article:published_time", "pubdate", "date")
     language = _coerce_optional_string(
-        (soup.html.get("lang") if soup.html else None) or _meta_content(soup, "og:locale")
+        (soup.html.get("lang") if soup.html else None)
+        or _meta_content(soup, "og:locale")
     )
     site_name = _meta_content(soup, "og:site_name", "application-name")
     geo = _extract_geo(soup)
@@ -507,7 +524,9 @@ def _scrape_reddit_json(
     )
 
 
-def _flatten_bluesky_replies(node: dict[str, Any], depth: int = 0) -> list[dict[str, Any]]:
+def _flatten_bluesky_replies(
+    node: dict[str, Any], depth: int = 0
+) -> list[dict[str, Any]]:
     replies: list[dict[str, Any]] = []
     for child in node.get("replies", []) if isinstance(node, dict) else []:
         if not isinstance(child, dict):
@@ -546,7 +565,9 @@ def _scrape_bluesky_public(
     rkey = parts[3]
     did = resolve_bluesky_handle(handle)
     uri = f"at://{did}/app.bsky.feed.post/{rkey}"
-    payload = get_bluesky_post_thread(uri, depth=max(2, min(runtime.max_retries_per_target + 3, 10)))
+    payload = get_bluesky_post_thread(
+        uri, depth=max(2, min(runtime.max_retries_per_target + 3, 10))
+    )
 
     thread = payload.get("thread")
     if not isinstance(thread, dict):
@@ -648,7 +669,9 @@ def _scrape_youtube_oembed(
     title = _strip_text(str(payload.get("title") or target.title))
     author = _strip_text(str(payload.get("author_name") or "")) or None
     provider_name = _strip_text(str(payload.get("provider_name") or "YouTube"))
-    description = _strip_text(str(target.description or "YouTube video metadata extracted from oEmbed."))
+    description = _strip_text(
+        str(target.description or "YouTube video metadata extracted from oEmbed.")
+    )
     text = "\n\n".join(item for item in [title, description] if item)
     return ScrapedContent(
         fetch_backend="youtube_oembed",
@@ -696,7 +719,9 @@ def _scrape_youtube_oembed(
     )
 
 
-def _flatten_hn_comments(item: dict[str, Any], runtime: ScrapeRuntimeConfig, depth: int = 0) -> list[dict[str, Any]]:
+def _flatten_hn_comments(
+    item: dict[str, Any], runtime: ScrapeRuntimeConfig, depth: int = 0
+) -> list[dict[str, Any]]:
     comments: list[dict[str, Any]] = []
     kids = item.get("kids", [])
     if not isinstance(kids, list):
@@ -704,10 +729,16 @@ def _flatten_hn_comments(item: dict[str, Any], runtime: ScrapeRuntimeConfig, dep
     for kid in kids[:80]:
         if not isinstance(kid, int):
             continue
-        child = get_hn_item(kid, timeout_seconds=max(8.0, float(runtime.source_timeout_seconds)))
+        child = get_hn_item(
+            kid, timeout_seconds=max(8.0, float(runtime.source_timeout_seconds))
+        )
         if child.get("type") != "comment":
             continue
-        text = _strip_text(BeautifulSoup(str(child.get("text") or ""), "html.parser").get_text(" ", strip=True))
+        text = _strip_text(
+            BeautifulSoup(str(child.get("text") or ""), "html.parser").get_text(
+                " ", strip=True
+            )
+        )
         if text:
             comments.append(
                 {
@@ -734,11 +765,19 @@ def _scrape_hackernews_api(
     if not item_ids:
         raise RuntimeError("Hacker News URL missing item id.")
     item_id = int(item_ids[0])
-    story = get_hn_item(item_id, timeout_seconds=max(8.0, float(runtime.source_timeout_seconds)))
+    story = get_hn_item(
+        item_id, timeout_seconds=max(8.0, float(runtime.source_timeout_seconds))
+    )
     comments = _flatten_hn_comments(story, runtime)
-    story_text = _strip_text(BeautifulSoup(str(story.get("text") or ""), "html.parser").get_text(" ", strip=True))
+    story_text = _strip_text(
+        BeautifulSoup(str(story.get("text") or ""), "html.parser").get_text(
+            " ", strip=True
+        )
+    )
     title = _strip_text(str(story.get("title") or target.title))
-    description = _strip_text(str(target.description or "Hacker News story and discussion"))
+    description = _strip_text(
+        str(target.description or "Hacker News story and discussion")
+    )
     content_items = [
         {
             "kind": "story",
@@ -991,7 +1030,9 @@ def _scrape_camoufox_backend(
             {
                 "kind": "rendered_source",
                 "url": str(payload.get("url") or target.url),
-                "label": _strip_text(str(payload.get("title") or target.title or target.url)),
+                "label": _strip_text(
+                    str(payload.get("title") or target.title or target.url)
+                ),
             }
         ],
         content_items=[

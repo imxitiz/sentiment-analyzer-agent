@@ -2,7 +2,12 @@
 
 from typing import TYPE_CHECKING
 
-from .models import CleanerPlan, CleanerRecoveryPlan, CleanerResult, CleaningRuntimeConfig
+from .models import (
+    CleanerPlan,
+    CleanerRecoveryPlan,
+    CleanerResult,
+    CleaningRuntimeConfig,
+)
 
 if TYPE_CHECKING:
     from .agent import CleanerAgent

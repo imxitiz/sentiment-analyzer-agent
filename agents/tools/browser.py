@@ -58,7 +58,12 @@ def camoufox_click_browser(session_id: str, selector: str) -> str:
         return json.dumps({"success": True, **payload}, ensure_ascii=False)
     except Exception as exc:
         return json.dumps(
-            {"success": False, "error": str(exc), "session_id": session_id, "selector": selector},
+            {
+                "success": False,
+                "error": str(exc),
+                "session_id": session_id,
+                "selector": selector,
+            },
             ensure_ascii=False,
         )
 
@@ -98,7 +103,9 @@ def camoufox_extract_text_browser(
     try:
         from utils.camoufox import camoufox_extract_text
 
-        payload = camoufox_extract_text(session_id, selector=selector, max_chars=max_chars)
+        payload = camoufox_extract_text(
+            session_id, selector=selector, max_chars=max_chars
+        )
         return json.dumps({"success": True, **payload}, ensure_ascii=False)
     except Exception as exc:
         return json.dumps(
@@ -117,7 +124,9 @@ def camoufox_extract_links_browser(
     try:
         from utils.camoufox import camoufox_extract_links
 
-        payload = camoufox_extract_links(session_id, max_links=max_links, selector=selector)
+        payload = camoufox_extract_links(
+            session_id, max_links=max_links, selector=selector
+        )
         return json.dumps({"success": True, **payload}, ensure_ascii=False)
     except Exception as exc:
         return json.dumps(

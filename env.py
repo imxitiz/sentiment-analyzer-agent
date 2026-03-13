@@ -156,6 +156,7 @@ class EnvConfig:
         # Try loading .env file if python-dotenv is available
         try:
             from dotenv import load_dotenv
+
             load_dotenv()
             logger.info(
                 ".env file loaded via python-dotenv",

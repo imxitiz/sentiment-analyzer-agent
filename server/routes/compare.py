@@ -161,13 +161,12 @@ def _build_narrative(
     # Title
     if base_topic == target_topic:
         parts.append(
-            f"Comparing **v{base_ver}** vs **v{target_ver}** "
-            f"for **\"{base_topic}\"**."
+            f'Comparing **v{base_ver}** vs **v{target_ver}** for **"{base_topic}"**.'
         )
     else:
         parts.append(
-            f"Comparing **\"{base_topic}\"** (v{base_ver}) vs "
-            f"**\"{target_topic}\"** (v{target_ver})."
+            f'Comparing **"{base_topic}"** (v{base_ver}) vs '
+            f'**"{target_topic}"** (v{target_ver}).'
         )
 
     # Sentiment shift
@@ -190,9 +189,13 @@ def _build_narrative(
     # Volume change
     diff = sd.total_posts_after - sd.total_posts_before
     if diff > 0:
-        parts.append(f"Data volume increased by {diff} posts ({sd.total_posts_before} → {sd.total_posts_after}).")
+        parts.append(
+            f"Data volume increased by {diff} posts ({sd.total_posts_before} → {sd.total_posts_after})."
+        )
     elif diff < 0:
-        parts.append(f"Data volume decreased by {abs(diff)} posts ({sd.total_posts_before} → {sd.total_posts_after}).")
+        parts.append(
+            f"Data volume decreased by {abs(diff)} posts ({sd.total_posts_before} → {sd.total_posts_after})."
+        )
 
     # Keywords
     if kd.added:
@@ -258,17 +261,21 @@ async def compare_analyses(req: CompareRequest):
         pd_delta = None
         if bp and tp:
             pd_delta = round(tp.avg_sentiment - bp.avg_sentiment, 4)
-        platforms.append(PlatformDelta(
-            platform=plat,
-            before_avg=bp.avg_sentiment if bp else None,
-            after_avg=tp.avg_sentiment if tp else None,
-            delta=pd_delta,
-            before_posts=bp.post_count if bp else 0,
-            after_posts=tp.post_count if tp else 0,
-        ))
+        platforms.append(
+            PlatformDelta(
+                platform=plat,
+                before_avg=bp.avg_sentiment if bp else None,
+                after_avg=tp.avg_sentiment if tp else None,
+                delta=pd_delta,
+                before_posts=bp.post_count if bp else 0,
+                after_posts=tp.post_count if tp else 0,
+            )
+        )
 
     # ── Narrative
-    narrative = _build_narrative(base_topic, target_topic, base_ver, target_ver, sentiment, keywords)
+    narrative = _build_narrative(
+        base_topic, target_topic, base_ver, target_ver, sentiment, keywords
+    )
 
     result = ComparisonResult(
         base_topic=base_topic,

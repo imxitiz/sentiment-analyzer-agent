@@ -117,7 +117,9 @@ class HarvesterAgent(BaseAgent):
 
         collected_batches: list = []
         try:
-            search_results = await self._collect_search_batches(topic, brief, plan, runtime, writer)
+            search_results = await self._collect_search_batches(
+                topic, brief, plan, runtime, writer
+            )
             collected_batches.extend(search_results)
 
             seed_links = select_expansion_seeds(
@@ -150,7 +152,9 @@ class HarvesterAgent(BaseAgent):
             await writer.close()
             stats = writer.stats | {
                 "tasks_executed": len(plan.tasks),
-                "sources_used": list(dict.fromkeys(batch.source_name for batch in collected_batches)),
+                "sources_used": list(
+                    dict.fromkeys(batch.source_name for batch in collected_batches)
+                ),
                 "seed_links": len(seed_links),
             }
             finish_harvest_run(topic, run_id=run_id, status="completed", stats=stats)
@@ -185,7 +189,9 @@ class HarvesterAgent(BaseAgent):
         except Exception as exc:
             await writer.close()
             stats = writer.stats
-            finish_harvest_run(topic, run_id=run_id, status="failed", stats=stats, error=str(exc))
+            finish_harvest_run(
+                topic, run_id=run_id, status="failed", stats=stats, error=str(exc)
+            )
             self._checkpoint_agent_status(
                 topic,
                 status="failed",
@@ -267,9 +273,15 @@ class HarvesterAgent(BaseAgent):
             ),
         ]
         try:
-            structured_llm = self._llm_adapter.chat_model.with_structured_output(HarvestPlan)
+            structured_llm = self._llm_adapter.chat_model.with_structured_output(
+                HarvestPlan
+            )
             result = structured_llm.invoke(messages)
-            plan = result if isinstance(result, HarvestPlan) else HarvestPlan.model_validate(result)
+            plan = (
+                result
+                if isinstance(result, HarvestPlan)
+                else HarvestPlan.model_validate(result)
+            )
             if not plan.tasks:
                 raise ValueError("Structured harvester plan returned no tasks.")
             return plan

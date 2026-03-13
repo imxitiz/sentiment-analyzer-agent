@@ -68,7 +68,11 @@ def _normalize_content_items(
     for index, raw_item in enumerate(document.content_items):
         if not isinstance(raw_item, dict):
             continue
-        metadata = raw_item.get("metadata") if isinstance(raw_item.get("metadata"), dict) else {}
+        metadata = (
+            raw_item.get("metadata")
+            if isinstance(raw_item.get("metadata"), dict)
+            else {}
+        )
         item_url = _extract_reference_url(raw_item)
         text = str(raw_item.get("text") or "").strip()
         title = str(raw_item.get("title") or "").strip()
@@ -120,7 +124,9 @@ def _normalize_content_items(
     return normalized_items
 
 
-def _summarize_authors(document: ScrapedContent, content_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _summarize_authors(
+    document: ScrapedContent, content_items: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     authors: dict[str, dict[str, Any]] = {}
     for raw_author in document.authors:
         if not isinstance(raw_author, dict):
@@ -144,7 +150,10 @@ def _summarize_authors(document: ScrapedContent, content_items: list[dict[str, A
 
 
 def _collect_references(
-    *, target: ScrapeTarget, document: ScrapedContent, content_items: list[dict[str, Any]]
+    *,
+    target: ScrapeTarget,
+    document: ScrapedContent,
+    content_items: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     seen: set[str] = set()
     references: list[dict[str, Any]] = []
@@ -174,7 +183,13 @@ def _collect_references(
 
 
 def _build_topic_ref(
-    *, topic: str, topic_slug: str, run_id: str, target: ScrapeTarget, status: str, document_id: str | None = None
+    *,
+    topic: str,
+    topic_slug: str,
+    run_id: str,
+    target: ScrapeTarget,
+    status: str,
+    document_id: str | None = None,
 ) -> dict[str, Any]:
     payload = {
         "topic": topic,
@@ -388,7 +403,9 @@ class MongoDocumentStore(BaseDocumentStore):
         self._documents.create_index("references.url")
         self._documents.create_index("content_items.item_id")
         self._documents.create_index([("platform", 1), ("published_at", -1)])
-        self._documents.create_index([("topic_slugs", 1), ("platform", 1), ("published_at", -1)])
+        self._documents.create_index(
+            [("topic_slugs", 1), ("platform", 1), ("published_at", -1)]
+        )
 
         self._runs.create_index("run_id", unique=True)
         self._runs.create_index("topic")

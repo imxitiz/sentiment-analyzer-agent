@@ -59,6 +59,7 @@ logger = get_logger("BaseLLM")
 # DUMMY ADAPTER  (always available, zero-dependency)
 # =====================================================================
 
+
 class DummyAdapter(BaseLLMAdapter):
     """Deterministic, zero-dependency adapter for development / testing."""
 
@@ -86,7 +87,7 @@ class DummyAdapter(BaseLLMAdapter):
         temperature: Optional[float] = None,
         **kwargs: Any,
     ) -> str:  # noqa: D102
-        snippet = prompt.strip().replace("\n", " ")[:max(40, max_tokens)]
+        snippet = prompt.strip().replace("\n", " ")[: max(40, max_tokens)]
         return f"[DUMMY-LLM] {snippet}"
 
     async def agenerate(
@@ -103,6 +104,7 @@ class DummyAdapter(BaseLLMAdapter):
 # =====================================================================
 # FACTORY
 # =====================================================================
+
 
 def get_llm(
     provider: str = "google",
@@ -152,8 +154,7 @@ def get_llm(
     model = model or default_model(canonical)
 
     logger.info(
-        "Creating LLM adapter  provider=%s  model=%s  temperature=%.2f  "
-        "max_tokens=%d",
+        "Creating LLM adapter  provider=%s  model=%s  temperature=%.2f  max_tokens=%d",
         canonical,
         model,
         temperature,
@@ -197,6 +198,7 @@ def get_llm(
 # =====================================================================
 # CONVENIENCE HELPERS
 # =====================================================================
+
 
 def get_gemini_llm(model: str | None = None, **kwargs: Any) -> BaseLLMAdapter:
     """Shortcut: ``get_llm("google", model=…)``."""
@@ -262,4 +264,3 @@ if __name__ == "__main__":
     logger.info("  (each agent gets its own independent adapter instance)")
 
     logger.info("\nDone.")
-

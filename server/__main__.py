@@ -19,8 +19,15 @@ def main() -> None:
     """Run the FastAPI server with uvicorn."""
     parser = argparse.ArgumentParser(description="Sentiment Analyzer API Server")
     parser.add_argument("--host", default=server_config.HOST, help="Bind host")
-    parser.add_argument("--port", type=int, default=server_config.PORT, help="Bind port")
-    parser.add_argument("--reload", action="store_true", default=server_config.DEBUG, help="Enable auto-reload")
+    parser.add_argument(
+        "--port", type=int, default=server_config.PORT, help="Bind port"
+    )
+    parser.add_argument(
+        "--reload",
+        action="store_true",
+        default=server_config.DEBUG,
+        help="Enable auto-reload",
+    )
     args = parser.parse_args()
 
     print(f"🚀 Starting Sentiment Analyzer API on http://{args.host}:{args.port}")

@@ -83,6 +83,7 @@ def _load_local_camoufox() -> Any | None:
 def _load_playwright_sync() -> Any | None:
     try:
         from playwright.sync_api import sync_playwright
+
         return sync_playwright
     except ImportError:
         return None
@@ -222,7 +223,9 @@ def camoufox_navigate(
     return _session_snapshot(session)
 
 
-def camoufox_click(session_id: str, selector: str, *, timeout_seconds: float = 30.0) -> dict[str, Any]:
+def camoufox_click(
+    session_id: str, selector: str, *, timeout_seconds: float = 30.0
+) -> dict[str, Any]:
     """Click an element in an existing Camoufox browser session."""
     session = _require_session(session_id)
     session.page.click(selector, timeout=int(timeout_seconds * 1000))

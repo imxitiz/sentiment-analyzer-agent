@@ -94,4 +94,3 @@ class RecoveryPlan(BaseModel):
         description="Whether the error should be treated as terminal for this URL"
     )
     reason: str = Field(description="Short explanation of the decision")
-

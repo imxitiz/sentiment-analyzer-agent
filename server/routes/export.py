@@ -84,26 +84,38 @@ def _result_to_csv(result: AnalysisResult) -> str:
     writer = csv.writer(buf)
 
     # Header
-    writer.writerow([
-        "id", "platform", "author", "content", "url",
-        "positive", "negative", "neutral", "compound",
-        "keywords", "timestamp",
-    ])
+    writer.writerow(
+        [
+            "id",
+            "platform",
+            "author",
+            "content",
+            "url",
+            "positive",
+            "negative",
+            "neutral",
+            "compound",
+            "keywords",
+            "timestamp",
+        ]
+    )
 
     for post in result.posts:
-        writer.writerow([
-            post.id,
-            post.platform,
-            post.author,
-            post.content,
-            post.url,
-            post.sentiment.positive,
-            post.sentiment.negative,
-            post.sentiment.neutral,
-            post.sentiment.compound,
-            "; ".join(post.keywords),
-            post.timestamp.isoformat(),
-        ])
+        writer.writerow(
+            [
+                post.id,
+                post.platform,
+                post.author,
+                post.content,
+                post.url,
+                post.sentiment.positive,
+                post.sentiment.negative,
+                post.sentiment.neutral,
+                post.sentiment.compound,
+                "; ".join(post.keywords),
+                post.timestamp.isoformat(),
+            ]
+        )
 
     return buf.getvalue()
 
@@ -214,7 +226,9 @@ def _result_to_markdown(result: AnalysisResult) -> str:
 async def export_analysis(
     session_id: str,
     format: str = Query("json", pattern="^(json|csv|md)$"),
-    version: int | None = Query(None, description="Version to export (default: current)"),
+    version: int | None = Query(
+        None, description="Version to export (default: current)"
+    ),
 ):
     """Export analysis results as JSON, CSV, or Markdown.
 

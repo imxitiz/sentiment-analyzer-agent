@@ -30,15 +30,15 @@ from pydantic import BaseModel, Field
 class SessionStatus(str, Enum):
     """Lifecycle of an analysis session."""
 
-    IDLE = "idle"                            # Created, waiting for topic
-    PLANNING = "planning"                    # Planner agent running
-    SEARCHING = "searching"                  # Searcher agent running
-    SCRAPING = "scraping"                    # Scraper agent running
-    CLEANING = "cleaning"                    # Data cleaning
-    ANALYSING = "analysing"                  # Sentiment analysis
-    CLARIFICATION = "clarification_needed"   # Waiting for user input
-    COMPLETED = "completed"                  # Done — dashboard ready
-    ERROR = "error"                          # Something went wrong
+    IDLE = "idle"  # Created, waiting for topic
+    PLANNING = "planning"  # Planner agent running
+    SEARCHING = "searching"  # Searcher agent running
+    SCRAPING = "scraping"  # Scraper agent running
+    CLEANING = "cleaning"  # Data cleaning
+    ANALYSING = "analysing"  # Sentiment analysis
+    CLARIFICATION = "clarification_needed"  # Waiting for user input
+    COMPLETED = "completed"  # Done — dashboard ready
+    ERROR = "error"  # Something went wrong
 
 
 class MessageRole(str, Enum):
@@ -81,8 +81,8 @@ class AgentEvent(BaseModel):
     """A real-time event from the agent pipeline."""
 
     type: AgentEventType
-    agent: str = ""                    # Which agent emitted this
-    message: str = ""                  # Human-readable description
+    agent: str = ""  # Which agent emitted this
+    message: str = ""  # Human-readable description
     data: dict[str, Any] = Field(default_factory=dict)
     timestamp: datetime = Field(default_factory=datetime.now)
 
@@ -103,7 +103,7 @@ class AnalysedPost(BaseModel):
     """A single post/comment with sentiment analysis applied."""
 
     id: str
-    platform: str                      # reddit, twitter, news, facebook
+    platform: str  # reddit, twitter, news, facebook
     author: str = "anonymous"
     content: str
     url: str = ""
@@ -118,7 +118,7 @@ class PlatformBreakdown(BaseModel):
 
     platform: str
     post_count: int
-    avg_sentiment: float               # Compound score average
+    avg_sentiment: float  # Compound score average
     positive_pct: float
     negative_pct: float
     neutral_pct: float
@@ -188,7 +188,9 @@ class Session(BaseModel):
     id: str
     topic: str | None = None
     status: SessionStatus = SessionStatus.IDLE
-    version: int = Field(default=1, description="Analysis version (incremented on refresh)")
+    version: int = Field(
+        default=1, description="Analysis version (incremented on refresh)"
+    )
     version_history: list[VersionSnapshot] = Field(
         default_factory=list,
         description="Archived snapshots of previous analysis versions",

@@ -58,13 +58,15 @@ async def session_websocket(websocket: WebSocket, session_id: str):
             await websocket.send_json(past_event.model_dump(mode="json"))
 
         # Send current status
-        await websocket.send_json({
-            "type": "status_change",
-            "agent": "",
-            "message": f"Current status: {session.status.value}",
-            "data": {"status": session.status.value},
-            "timestamp": session.updated_at.isoformat(),
-        })
+        await websocket.send_json(
+            {
+                "type": "status_change",
+                "agent": "",
+                "message": f"Current status: {session.status.value}",
+                "data": {"status": session.status.value},
+                "timestamp": session.updated_at.isoformat(),
+            }
+        )
 
         # Listen for client messages
         while True:
@@ -76,14 +78,18 @@ async def session_websocket(websocket: WebSocket, session_id: str):
 
                 if msg_type == "user_message" and content:
                     await session_manager.add_message(
-                        session_id, MessageRole.USER, content,
+                        session_id,
+                        MessageRole.USER,
+                        content,
                     )
 
             except json.JSONDecodeError:
-                await websocket.send_json({
-                    "type": "error",
-                    "message": "Invalid JSON",
-                })
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "message": "Invalid JSON",
+                    }
+                )
 
     except WebSocketDisconnect:
         pass

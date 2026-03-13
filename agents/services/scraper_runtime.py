@@ -85,7 +85,10 @@ def resolve_enabled_scrape_backends() -> tuple[str, ...]:
 
     enabled: list[str] = []
     for name, spec in SCRAPE_BACKEND_REGISTRY.items():
-        if _as_bool(config.get(spec.env_key or f"SCRAPER_ENABLE_{name.upper()}"), spec.default_enabled):
+        if _as_bool(
+            config.get(spec.env_key or f"SCRAPER_ENABLE_{name.upper()}"),
+            spec.default_enabled,
+        ):
             enabled.append(name)
     return tuple(enabled)
 
@@ -133,11 +136,7 @@ def available_registered_backends(runtime: ScrapeRuntimeConfig) -> list[str]:
         snapshot = backend_capability_snapshot(runtime.enabled_backends)
     else:
         snapshot = runtime.backend_status
-    return [
-        name
-        for name, details in snapshot.items()
-        if details.get("available")
-    ]
+    return [name for name, details in snapshot.items() if details.get("available")]
 
 
 def build_scrape_runtime_config() -> ScrapeRuntimeConfig:

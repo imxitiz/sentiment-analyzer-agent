@@ -150,7 +150,9 @@ def _expand_contractions(value: str) -> str:
     return out
 
 
-def _collect_backend_candidates(document: dict[str, Any], runtime: CleaningRuntimeConfig) -> dict[str, str]:
+def _collect_backend_candidates(
+    document: dict[str, Any], runtime: CleaningRuntimeConfig
+) -> dict[str, str]:
     candidates: dict[str, str] = {}
     raw_html = str(document.get("raw_html") or "").strip()
 
@@ -173,7 +175,11 @@ def _collect_backend_candidates(document: dict[str, Any], runtime: CleaningRunti
             if isinstance(title, str) and title.strip():
                 chunks.append(title.strip())
             if isinstance(text, str) and text.strip():
-                chunks.append(_strip_html(text) if _HTML_TAG_PATTERN.search(text) else text.strip())
+                chunks.append(
+                    _strip_html(text)
+                    if _HTML_TAG_PATTERN.search(text)
+                    else text.strip()
+                )
 
         candidates["content_fields"] = _WHITESPACE_PATTERN.sub(
             " ",
@@ -210,9 +216,7 @@ def _raw_feature_scores(text: str) -> dict[str, float]:
     alpha_count = sum(1 for c in text if c.isalpha())
     url_like_chars = sum(len(match.group(0)) for match in _URL_PATTERN.finditer(text))
     symbol_count = sum(1 for c in text if not c.isalnum() and not c.isspace())
-    unique_ratio = (
-        len({tok.lower() for tok in tokens}) / max(1, token_count)
-    )
+    unique_ratio = len({tok.lower() for tok in tokens}) / max(1, token_count)
     alpha_ratio = alpha_count / max(1, chars)
     url_ratio = url_like_chars / max(1, chars)
     symbol_ratio = symbol_count / max(1, chars)
@@ -252,7 +256,9 @@ def _pick_best_source(candidates: dict[str, str]) -> tuple[str, str, dict[str, f
     return best_backend, best_text, best_scores
 
 
-def _apply_plan_overrides(runtime: CleaningRuntimeConfig, plan: CleanerPlan | None) -> CleaningRuntimeConfig:
+def _apply_plan_overrides(
+    runtime: CleaningRuntimeConfig, plan: CleanerPlan | None
+) -> CleaningRuntimeConfig:
     if plan is None:
         return runtime
 
@@ -284,7 +290,9 @@ def _apply_plan_overrides(runtime: CleaningRuntimeConfig, plan: CleanerPlan | No
     return replace(runtime, **updates)
 
 
-def _apply_custom_noise_filters(text: str, runtime: CleaningRuntimeConfig, plan: CleanerPlan | None) -> str:
+def _apply_custom_noise_filters(
+    text: str, runtime: CleaningRuntimeConfig, plan: CleanerPlan | None
+) -> str:
     result = text
     patterns = list(runtime.custom_noise_patterns)
     if plan is not None:
@@ -305,7 +313,9 @@ def _apply_custom_noise_filters(text: str, runtime: CleaningRuntimeConfig, plan:
     return _WHITESPACE_PATTERN.sub(" ", result).strip()
 
 
-def _normalize_text(value: str, runtime: CleaningRuntimeConfig, plan: CleanerPlan | None) -> str:
+def _normalize_text(
+    value: str, runtime: CleaningRuntimeConfig, plan: CleanerPlan | None
+) -> str:
     text = html.unescape(value)
     text = _fix_unicode(text)
     text = _demojize_text(text)
@@ -442,7 +452,16 @@ def clean_document(
         if language.lower() not in preferred:
             quality_flags.append("language_filtered")
 
-    if any(flag in {"low_alpha_ratio", "high_url_ratio", "high_symbol_ratio", "language_filtered"} for flag in quality_flags):
+    if any(
+        flag
+        in {
+            "low_alpha_ratio",
+            "high_url_ratio",
+            "high_symbol_ratio",
+            "language_filtered",
+        }
+        for flag in quality_flags
+    ):
         return CleanerResult(
             status="failed",
             cleaned_text=cleaned,

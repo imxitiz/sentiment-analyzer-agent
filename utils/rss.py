@@ -8,7 +8,9 @@ from xml.etree import ElementTree as ET
 import requests
 
 
-def fetch_rss_feed(url: str, *, timeout_seconds: float = 25.0, max_items: int = 30) -> dict[str, Any]:
+def fetch_rss_feed(
+    url: str, *, timeout_seconds: float = 25.0, max_items: int = 30
+) -> dict[str, Any]:
     """Fetch and parse an RSS/Atom feed into a normalized structure."""
     response = requests.get(url, timeout=max(5.0, timeout_seconds))
     response.raise_for_status()
@@ -55,12 +57,28 @@ def fetch_rss_feed(url: str, *, timeout_seconds: float = 25.0, max_items: int = 
         link_node = entry.find("a:link", atom_ns)
         items.append(
             {
-                "title": (entry.findtext("a:title", default="", namespaces=atom_ns) or "").strip(),
-                "link": ((link_node.get("href") if link_node is not None else "") or "").strip(),
-                "description": (entry.findtext("a:summary", default="", namespaces=atom_ns) or "").strip(),
-                "author": (entry.findtext("a:author/a:name", default="", namespaces=atom_ns) or "").strip() or None,
-                "published_at": (entry.findtext("a:published", default="", namespaces=atom_ns) or "").strip() or None,
-                "guid": (entry.findtext("a:id", default="", namespaces=atom_ns) or "").strip() or None,
+                "title": (
+                    entry.findtext("a:title", default="", namespaces=atom_ns) or ""
+                ).strip(),
+                "link": (
+                    (link_node.get("href") if link_node is not None else "") or ""
+                ).strip(),
+                "description": (
+                    entry.findtext("a:summary", default="", namespaces=atom_ns) or ""
+                ).strip(),
+                "author": (
+                    entry.findtext("a:author/a:name", default="", namespaces=atom_ns)
+                    or ""
+                ).strip()
+                or None,
+                "published_at": (
+                    entry.findtext("a:published", default="", namespaces=atom_ns) or ""
+                ).strip()
+                or None,
+                "guid": (
+                    entry.findtext("a:id", default="", namespaces=atom_ns) or ""
+                ).strip()
+                or None,
             }
         )
     return {

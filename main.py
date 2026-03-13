@@ -23,18 +23,21 @@ def _parse_args() -> argparse.Namespace:
         description="Run the sentiment analysis orchestrator agent",
     )
     p.add_argument(
-        "--topic", "-t",
+        "--topic",
+        "-t",
         type=str,
         help="Topic to analyse (example: 'Nepal elections 2026')",
     )
     p.add_argument(
-        "--provider", "-p",
+        "--provider",
+        "-p",
         type=str,
         default="gemini",
         help="LLM provider (default: gemini). Options: gemini, openai, ollama.",
     )
     p.add_argument(
-        "--model", "-m",
+        "--model",
+        "-m",
         type=str,
         default=None,
         help="LLM model name (default: provider default).",
@@ -60,6 +63,7 @@ def main() -> None:
     # otherwise default to dummy provider so the pipeline stays runnable.
     if not args.demo:
         from env import config
+
         try:
             config.require("SERPER_API_KEY")
         except EnvironmentError:

@@ -108,7 +108,8 @@ class BaseAgent(ABC):
         model_name = model or self._llm_model
 
         self._llm_adapter: BaseLLMAdapter = get_llm(
-            provider, model_name,
+            provider,
+            model_name,
             temperature=temperature,
             max_tokens=max_tokens,
             **llm_kwargs,
@@ -138,7 +139,9 @@ class BaseAgent(ABC):
         self._consecutive_failures = 0
         self._circuit_open_until = 0.0
         self._log = context_logger(
-            f"agents.{self._name}", actor=self._name, phase="AGENT",
+            f"agents.{self._name}",
+            actor=self._name,
+            phase="AGENT",
         )
 
         # Resolve prompt
@@ -157,12 +160,15 @@ class BaseAgent(ABC):
             self._graph = None
             if self._mode == "react":
                 self._graph = self._build_react_graph(
-                    all_tools, self._system_prompt,
+                    all_tools,
+                    self._system_prompt,
                 )
 
         self._log.info(
             "Agent ready  name=%s  mode=%s  tools=%d",
-            self._name, self._mode, len(all_tools),
+            self._name,
+            self._mode,
+            len(all_tools),
             action="agent_init",
             meta={
                 "name": self._name,
@@ -232,6 +238,7 @@ class BaseAgent(ABC):
 
         # Fall back to global prompt manager
         from prompts import get_prompt
+
         return get_prompt(name, **kwargs)
 
     # ── Graph building ───────────────────────────────────────────────
@@ -264,12 +271,11 @@ class BaseAgent(ABC):
             Dict with ``messages`` (list) and ``output`` (str), same
             shape as ``invoke()``.
         """
-        output = (
-            f"[DEMO:{self._name}] Processed topic: "
-            f"{message.strip()[:200]}"
-        )
+        output = f"[DEMO:{self._name}] Processed topic: {message.strip()[:200]}"
         self._log.info(
-            "demo invoke  agent=%s", self._name, action="demo_invoke",
+            "demo invoke  agent=%s",
+            self._name,
+            action="demo_invoke",
         )
         return {"messages": [], "output": output}
 
@@ -280,7 +286,9 @@ class BaseAgent(ABC):
             Dict with ``messages`` (list) and ``output`` (str).
         """
         self._log.info(
-            "invoke  len=%d  mode=%s", len(message), self._mode,
+            "invoke  len=%d  mode=%s",
+            len(message),
+            self._mode,
             action="invoke",
         )
         self._checkpoint_topic_input(message)
@@ -312,7 +320,9 @@ class BaseAgent(ABC):
     async def ainvoke(self, message: str, **kwargs: Any) -> dict[str, Any]:
         """Run the agent asynchronously."""
         self._log.info(
-            "ainvoke  len=%d  mode=%s", len(message), self._mode,
+            "ainvoke  len=%d  mode=%s",
+            len(message),
+            self._mode,
             action="ainvoke",
         )
         self._checkpoint_topic_input(message)
@@ -405,7 +415,8 @@ class BaseAgent(ABC):
             )
             output = self._extract_last_message(result)
             self._log.success(
-                "invoke OK", action="invoke",
+                "invoke OK",
+                action="invoke",
                 meta={"output_len": len(output)},
             )
             return {"messages": result["messages"], "output": output}
@@ -595,8 +606,7 @@ class BaseAgent(ABC):
 
         remaining = int(self._circuit_open_until - now)
         raise RuntimeError(
-            f"Circuit breaker open for agent '{self._name}'. "
-            f"Retry after {remaining}s."
+            f"Circuit breaker open for agent '{self._name}'. Retry after {remaining}s."
         )
 
     def _on_attempt_success(self) -> None:
@@ -611,10 +621,14 @@ class BaseAgent(ABC):
 
     def _on_attempt_failure(self, exc: Exception) -> None:
         self._consecutive_failures += 1
-        should_open = self._consecutive_failures >= self._resolved_circuit_breaker_threshold
+        should_open = (
+            self._consecutive_failures >= self._resolved_circuit_breaker_threshold
+        )
 
         if should_open:
-            self._circuit_open_until = time.monotonic() + self._resolved_circuit_breaker_cooldown_seconds
+            self._circuit_open_until = (
+                time.monotonic() + self._resolved_circuit_breaker_cooldown_seconds
+            )
             self._log.error(
                 "Circuit breaker opened",
                 action="circuit_breaker_open",
@@ -641,9 +655,7 @@ class BaseAgent(ABC):
         elapsed = time.monotonic() - started_at
         if elapsed <= self._resolved_timeout_seconds:
             return
-        exc = TimeoutError(
-            f"Stream timed out after {self._resolved_timeout_seconds}s"
-        )
+        exc = TimeoutError(f"Stream timed out after {self._resolved_timeout_seconds}s")
         self._on_attempt_failure(exc)
         raise exc
 
@@ -790,7 +802,8 @@ class BaseAgent(ABC):
         response = self._llm_adapter.chat_model.invoke(messages)
         output = response.content if hasattr(response, "content") else str(response)
         self._log.success(
-            "direct OK", action="invoke_direct",
+            "direct OK",
+            action="invoke_direct",
             meta={"output_len": len(output)},
         )
         return {"messages": messages + [response], "output": output}

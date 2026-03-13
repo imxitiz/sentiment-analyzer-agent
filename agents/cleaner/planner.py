@@ -32,14 +32,20 @@ class CleanerPlannerAgent(BaseAgent):
                 "plan": plan,
             }
 
-        structured_llm = self._llm_adapter.chat_model.with_structured_output(CleanerPlan)
+        structured_llm = self._llm_adapter.chat_model.with_structured_output(
+            CleanerPlan
+        )
         result = structured_llm.invoke(
             [
                 SystemMessage(content=self._system_prompt),
                 HumanMessage(content=message),
             ]
         )
-        plan = result if isinstance(result, CleanerPlan) else CleanerPlan.model_validate(result)
+        plan = (
+            result
+            if isinstance(result, CleanerPlan)
+            else CleanerPlan.model_validate(result)
+        )
         return {
             "messages": [],
             "output": plan.model_dump_json(indent=2),

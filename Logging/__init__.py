@@ -79,6 +79,7 @@ _LOCK = threading.Lock()
 # STRUCTURED LOG ENTRY (dict – zero-dependency JSON serialisation)
 # =====================================================================
 
+
 def _make_entry(
     level: str,
     name: str,
@@ -114,6 +115,7 @@ def _make_entry(
 # RING BUFFER (thread-safe in-memory store)
 # =====================================================================
 
+
 class _RingBuffer:
     """Fixed-size, thread-safe ring buffer of log entries."""
 
@@ -138,7 +140,9 @@ class _RingBuffer:
         with self._lock:
             return list(self._buf[-limit:])
 
-    def subscribe(self, callback: Callable[[dict[str, Any]], Any]) -> Callable[[], None]:
+    def subscribe(
+        self, callback: Callable[[dict[str, Any]], Any]
+    ) -> Callable[[], None]:
         self._subscribers.add(callback)
         return lambda: self._subscribers.discard(callback)
 
@@ -168,12 +172,12 @@ _RESET = "\033[0m"
 _DIM = "\033[2m"
 _BOLD = "\033[1m"
 _COLORS: dict[str, str] = {
-    "DEBUG": "\033[90m",     # gray
-    "INFO": "\033[36m",      # cyan
-    "WARNING": "\033[33m",   # yellow
-    "ERROR": "\033[31m",     # red
+    "DEBUG": "\033[90m",  # gray
+    "INFO": "\033[36m",  # cyan
+    "WARNING": "\033[33m",  # yellow
+    "ERROR": "\033[31m",  # red
     "CRITICAL": "\033[35m",  # magenta
-    "SUCCESS": "\033[32m",   # green
+    "SUCCESS": "\033[32m",  # green
 }
 _LEVEL_SHORT: dict[str, str] = {
     "DEBUG": "DBG",
@@ -259,6 +263,7 @@ class _JSONFileFormatter(logging.Formatter):
 # RING BUFFER HANDLER
 # =====================================================================
 
+
 class _RingBufferHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         entry = _make_entry(
@@ -297,6 +302,7 @@ logging.Logger.success = _success  # type: ignore[attr-defined]
 # =====================================================================
 # CONFIGURE (called once, idempotent)
 # =====================================================================
+
 
 def _configure(level: Optional[str] = None) -> None:
     global _CONFIGURED
@@ -345,6 +351,7 @@ def _configure(level: Optional[str] = None) -> None:
 # STRUCTURED LOGGER WRAPPER
 # =====================================================================
 
+
 class StructuredLogger:
     """Thin wrapper around ``logging.Logger`` that accepts structured
     context as keyword arguments.
@@ -373,7 +380,9 @@ class StructuredLogger:
         ctx = {k: kwargs.pop(k) for k in list(kwargs) if k in self._CONTEXT_KEYS}
         return ctx, kwargs
 
-    def _log(self, level: int, msg: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+    def _log(
+        self, level: int, msg: str, args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> None:
         ctx, remaining = self._split(kwargs)
         self._inner.log(level, msg, *args, extra=ctx, **remaining)
 
@@ -405,6 +414,7 @@ class StructuredLogger:
 # =====================================================================
 # CONTEXT LOGGER (pre-bound fields)
 # =====================================================================
+
 
 class _ContextLogger:
     """Logger with pre-bound context fields.
@@ -446,6 +456,7 @@ class _ContextLogger:
 # =====================================================================
 # PUBLIC API
 # =====================================================================
+
 
 def get_logger(name: str) -> StructuredLogger:
     """Return a ``StructuredLogger`` for *name*.

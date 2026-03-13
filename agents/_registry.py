@@ -38,6 +38,7 @@ _AGENT_REGISTRY: dict[str, type[BaseAgent]] = {}
 
 # ── Public API ───────────────────────────────────────────────────────
 
+
 def register_agent(cls: type[BaseAgent]) -> type[BaseAgent]:
     """Class decorator — auto-register an agent class by its ``_name``.
 
@@ -60,7 +61,9 @@ def register_agent(cls: type[BaseAgent]) -> type[BaseAgent]:
 
     _AGENT_REGISTRY[name] = cls
     logger.info(
-        "Registered agent  name=%s  class=%s", name, cls.__name__,
+        "Registered agent  name=%s  class=%s",
+        name,
+        cls.__name__,
     )
     return cls
 
@@ -73,9 +76,7 @@ def get_agent_class(name: str) -> type[BaseAgent]:
     """
     if name not in _AGENT_REGISTRY:
         available = ", ".join(list_agents()) or "(none)"
-        raise KeyError(
-            f"Unknown agent: {name!r}. Registered: {available}"
-        )
+        raise KeyError(f"Unknown agent: {name!r}. Registered: {available}")
     return _AGENT_REGISTRY[name]
 
 

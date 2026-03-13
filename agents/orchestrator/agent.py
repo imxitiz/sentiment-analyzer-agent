@@ -79,10 +79,8 @@ class OrchestratorAgent(BaseAgent):
             from agents.harvester.agent import HarvesterAgent
             from agents.planner.agent import PlannerAgent
             from agents.scraper.agent import ScraperAgent
-            forwarded = {
-                k: v for k, v in kwargs.items()
-                if k in ("llm_provider",)
-            }
+
+            forwarded = {k: v for k, v in kwargs.items() if k in ("llm_provider",)}
             sub_agents = [
                 PlannerAgent(**forwarded),
                 HarvesterAgent(**forwarded),
@@ -188,7 +186,8 @@ class OrchestratorAgent(BaseAgent):
         """
         topic = message.strip()
         self._log.info(
-            "Demo orchestration  topic=%s", topic,
+            "Demo orchestration  topic=%s",
+            topic,
             action="demo_orchestrate",
         )
 
@@ -199,7 +198,7 @@ class OrchestratorAgent(BaseAgent):
             "**Mode**: Demo (static data)\n",
             "---\n",
             "## 1. Topic Assessment\n",
-            f"The topic **\"{topic}\"** is clear and specific enough to "
+            f'The topic **"{topic}"** is clear and specific enough to '
             f"proceed directly without clarification.\n",
         ]
 
@@ -207,7 +206,9 @@ class OrchestratorAgent(BaseAgent):
         sub_results: dict[str, dict] = {}
         for agent in self._sub_agents:
             self._log.info(
-                "Delegating to %s", agent.name, action="demo_delegate",
+                "Delegating to %s",
+                agent.name,
+                action="demo_delegate",
             )
             result = agent.invoke(topic)
             sub_results[agent.name] = result
@@ -232,9 +233,7 @@ class OrchestratorAgent(BaseAgent):
 
                 sections.append("### Platform Strategy\n")
                 for p in plan.platforms:
-                    sections.append(
-                        f"- **{p.name}** ({p.priority}): {p.reason}"
-                    )
+                    sections.append(f"- **{p.name}** ({p.priority}): {p.reason}")
                 sections.append("")
 
                 sections.append("### Search Queries\n")

@@ -345,7 +345,9 @@ def is_probably_low_value_url(url: str) -> bool:
     return False
 
 
-def score_link(link: HarvestedLink, brief: ResearchBrief) -> tuple[float, float, str | None]:
+def score_link(
+    link: HarvestedLink, brief: ResearchBrief
+) -> tuple[float, float, str | None]:
     """Return quality score, relevance score, and optional rejection reason."""
     normalized_url = normalize_url(link.url)
     if not normalized_url:
@@ -354,7 +356,8 @@ def score_link(link: HarvestedLink, brief: ResearchBrief) -> tuple[float, float,
         return 0.05, 0.05, "low_value_url"
 
     text = " ".join(
-        part for part in [
+        part
+        for part in [
             link.title,
             link.description,
             link.discovery_query,
@@ -446,11 +449,16 @@ class AsyncLinkWriter:
 
     @property
     def is_full(self) -> bool:
-        return self._stats.links_inserted >= self._config.max_links or self._stop_event.is_set()
+        return (
+            self._stats.links_inserted >= self._config.max_links
+            or self._stop_event.is_set()
+        )
 
     async def start(self) -> None:
         init_harvest_tables(self._topic)
-        self._worker = asyncio.create_task(self._run(), name=f"harvest-writer:{self._topic}")
+        self._worker = asyncio.create_task(
+            self._run(), name=f"harvest-writer:{self._topic}"
+        )
 
     async def submit(self, link: HarvestedLink) -> bool:
         if self.is_full:

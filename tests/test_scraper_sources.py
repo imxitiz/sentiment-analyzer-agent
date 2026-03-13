@@ -16,25 +16,33 @@ def _target(url: str, platform: str = "web") -> ScrapeTarget:
 
 def test_backend_plan_reddit_prefers_reddit_json() -> None:
     runtime = ScrapeRuntimeConfig()
-    plan = build_backend_plan(_target("https://www.reddit.com/r/test/comments/abc/demo"), runtime)
+    plan = build_backend_plan(
+        _target("https://www.reddit.com/r/test/comments/abc/demo"), runtime
+    )
     assert plan[0] == "reddit_json"
 
 
 def test_backend_plan_bluesky_includes_public_api() -> None:
     runtime = ScrapeRuntimeConfig()
-    plan = build_backend_plan(_target("https://bsky.app/profile/alice.bsky.social/post/3kxyz"), runtime)
+    plan = build_backend_plan(
+        _target("https://bsky.app/profile/alice.bsky.social/post/3kxyz"), runtime
+    )
     assert "bluesky_public" in plan
 
 
 def test_backend_plan_youtube_includes_oembed() -> None:
     runtime = ScrapeRuntimeConfig()
-    plan = build_backend_plan(_target("https://www.youtube.com/watch?v=dQw4w9WgXcQ"), runtime)
+    plan = build_backend_plan(
+        _target("https://www.youtube.com/watch?v=dQw4w9WgXcQ"), runtime
+    )
     assert "youtube_oembed" in plan
 
 
 def test_backend_plan_hackernews_includes_hn_api() -> None:
     runtime = ScrapeRuntimeConfig()
-    plan = build_backend_plan(_target("https://news.ycombinator.com/item?id=8863"), runtime)
+    plan = build_backend_plan(
+        _target("https://news.ycombinator.com/item?id=8863"), runtime
+    )
     assert "hackernews_api" in plan
 
 

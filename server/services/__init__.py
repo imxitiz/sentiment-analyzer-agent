@@ -75,11 +75,35 @@ _NEUTRAL_TEMPLATES = [
 
 _PLATFORMS = ["reddit", "twitter", "news", "facebook", "youtube"]
 _AUTHORS_BY_PLATFORM = {
-    "reddit": ["u/data_nerd_42", "u/policy_wonk", "u/concerned_citizen", "u/optimist_prime", "u/deep_thinker"],
-    "twitter": ["@analyst_pro", "@citizen_voice", "@news_watcher", "@data_driven", "@street_perspective"],
+    "reddit": [
+        "u/data_nerd_42",
+        "u/policy_wonk",
+        "u/concerned_citizen",
+        "u/optimist_prime",
+        "u/deep_thinker",
+    ],
+    "twitter": [
+        "@analyst_pro",
+        "@citizen_voice",
+        "@news_watcher",
+        "@data_driven",
+        "@street_perspective",
+    ],
     "news": ["Reuters", "AP News", "The Guardian", "Al Jazeera", "BBC"],
-    "facebook": ["Citizen Forum Group", "Policy Discussion", "Community Watch", "Local Voices", "Public Debate"],
-    "youtube": ["DataViz Pro", "Analysis Channel", "Street Interviews", "Policy Explained", "Deep Dive News"],
+    "facebook": [
+        "Citizen Forum Group",
+        "Policy Discussion",
+        "Community Watch",
+        "Local Voices",
+        "Public Debate",
+    ],
+    "youtube": [
+        "DataViz Pro",
+        "Analysis Channel",
+        "Street Interviews",
+        "Policy Explained",
+        "Deep Dive News",
+    ],
 }
 
 
@@ -112,9 +136,9 @@ def _generate_posts(topic: str, count: int = 150) -> list[AnalysedPost]:
 
     # Distribution: ~35% positive, ~25% negative, ~40% neutral
     biases = (
-        ["positive"] * int(count * 0.35) +
-        ["negative"] * int(count * 0.25) +
-        ["neutral"] * (count - int(count * 0.35) - int(count * 0.25))
+        ["positive"] * int(count * 0.35)
+        + ["negative"] * int(count * 0.25)
+        + ["neutral"] * (count - int(count * 0.35) - int(count * 0.25))
     )
     random.shuffle(biases)
 
@@ -136,19 +160,22 @@ def _generate_posts(topic: str, count: int = 150) -> list[AnalysedPost]:
         post_keywords = random.sample(topic_keywords, min(2, len(topic_keywords)))
         post_keywords += random.sample(extra_keywords, random.randint(1, 3))
 
-        posts.append(AnalysedPost(
-            id=_make_id(topic, i),
-            platform=platform,
-            author=author,
-            content=content,
-            url=f"https://{platform}.com/post/{_make_id(topic, i)}",
-            sentiment=_random_sentiment(bias),
-            keywords=post_keywords,
-            timestamp=now - timedelta(
-                hours=random.randint(0, 168),  # up to 1 week
-                minutes=random.randint(0, 59),
-            ),
-        ))
+        posts.append(
+            AnalysedPost(
+                id=_make_id(topic, i),
+                platform=platform,
+                author=author,
+                content=content,
+                url=f"https://{platform}.com/post/{_make_id(topic, i)}",
+                sentiment=_random_sentiment(bias),
+                keywords=post_keywords,
+                timestamp=now
+                - timedelta(
+                    hours=random.randint(0, 168),  # up to 1 week
+                    minutes=random.randint(0, 59),
+                ),
+            )
+        )
 
     # Sort by timestamp descending
     posts.sort(key=lambda p: p.timestamp, reverse=True)
@@ -178,15 +205,17 @@ def _compute_platform_breakdown(posts: list[AnalysedPost]) -> list[PlatformBreak
                 kw_counts[kw] = kw_counts.get(kw, 0) + 1
         top_kws = sorted(kw_counts, key=kw_counts.get, reverse=True)[:5]  # type: ignore[arg-type]
 
-        breakdowns.append(PlatformBreakdown(
-            platform=platform,
-            post_count=len(platform_posts),
-            avg_sentiment=round(avg, 4),
-            positive_pct=round(pos_count / total * 100, 1),
-            negative_pct=round(neg_count / total * 100, 1),
-            neutral_pct=round(neu_count / total * 100, 1),
-            top_keywords=top_kws,
-        ))
+        breakdowns.append(
+            PlatformBreakdown(
+                platform=platform,
+                post_count=len(platform_posts),
+                avg_sentiment=round(avg, 4),
+                positive_pct=round(pos_count / total * 100, 1),
+                negative_pct=round(neg_count / total * 100, 1),
+                neutral_pct=round(neu_count / total * 100, 1),
+                top_keywords=top_kws,
+            )
+        )
 
     return breakdowns
 
@@ -252,26 +281,55 @@ def generate_mock_plan(topic: str) -> ResearchPlanData:
     return ResearchPlanData(
         topic_summary=f"Comprehensive sentiment analysis of public opinion on: {topic}",
         keywords=[
-            topic, f"{topic} opinion", f"{topic} sentiment",
-            f"{topic} debate", f"{topic} controversy", f"{topic} support",
-            f"{topic} criticism", f"{topic} public opinion",
-            f"{topic} social media", f"{topic} news",
+            topic,
+            f"{topic} opinion",
+            f"{topic} sentiment",
+            f"{topic} debate",
+            f"{topic} controversy",
+            f"{topic} support",
+            f"{topic} criticism",
+            f"{topic} public opinion",
+            f"{topic} social media",
+            f"{topic} news",
         ],
         hashtags=[
-            f"#{slug}", f"#{slug}opinion", f"#{slug}debate",
-            f"#{slug}news", f"#{slug}sentiment", f"#{slug}trending",
+            f"#{slug}",
+            f"#{slug}opinion",
+            f"#{slug}debate",
+            f"#{slug}news",
+            f"#{slug}sentiment",
+            f"#{slug}trending",
         ],
         platforms=[
-            {"name": "reddit", "priority": "high", "reason": f"Large discussion threads on {topic}"},
-            {"name": "twitter", "priority": "high", "reason": "Real-time public opinion"},
+            {
+                "name": "reddit",
+                "priority": "high",
+                "reason": f"Large discussion threads on {topic}",
+            },
+            {
+                "name": "twitter",
+                "priority": "high",
+                "reason": "Real-time public opinion",
+            },
             {"name": "news", "priority": "medium", "reason": "Editorial perspectives"},
-            {"name": "facebook", "priority": "medium", "reason": "Community group discussions"},
-            {"name": "youtube", "priority": "low", "reason": "Comment sentiment on related videos"},
+            {
+                "name": "facebook",
+                "priority": "medium",
+                "reason": "Community group discussions",
+            },
+            {
+                "name": "youtube",
+                "priority": "low",
+                "reason": "Comment sentiment on related videos",
+            },
         ],
         search_queries=[
-            f"{topic} sentiment", f"{topic} public opinion",
-            f"site:reddit.com {topic}", f"site:twitter.com {topic}",
-            f"{topic} news analysis", f'"{topic}" reaction OR response',
+            f"{topic} sentiment",
+            f"{topic} public opinion",
+            f"site:reddit.com {topic}",
+            f"site:twitter.com {topic}",
+            f"{topic} news analysis",
+            f'"{topic}" reaction OR response',
         ],
         estimated_volume=f"Expected 500-2000 posts across 5 platforms for '{topic}'",
         reasoning=f"Multi-platform strategy targeting diverse opinion sources for '{topic}'",

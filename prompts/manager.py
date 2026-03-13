@@ -40,6 +40,7 @@ def _filename(name: str) -> str:
 
 # ── Global prompt loading (backward-compatible) ─────────────────────
 
+
 @functools.lru_cache(maxsize=64)
 def load_prompt(name: str) -> str:
     """Load a prompt template by name from the global ``raw_prompts/`` dir.

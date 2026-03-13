@@ -27,7 +27,9 @@ def crawlbase_fetch_url(
     """Fetch a URL through Crawlbase Crawling API."""
     resolved_token = token
     if not resolved_token:
-        resolved_token = config.get("CRAWLBASE_JS_TOKEN" if javascript else "CRAWLBASE_TOKEN")
+        resolved_token = config.get(
+            "CRAWLBASE_JS_TOKEN" if javascript else "CRAWLBASE_TOKEN"
+        )
     if not resolved_token:
         raise ValueError("Crawlbase token is not configured.")
 

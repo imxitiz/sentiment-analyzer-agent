@@ -40,14 +40,23 @@ from server.services.session_manager import session_manager
 from server.services import generate_mock_result, generate_mock_plan
 
 
-async def _emit(session_id: str, event_type: AgentEventType, agent: str, message: str, **data: object) -> None:
+async def _emit(
+    session_id: str,
+    event_type: AgentEventType,
+    agent: str,
+    message: str,
+    **data: object,
+) -> None:
     """Helper to emit an agent event."""
-    await session_manager.add_event(session_id, AgentEvent(
-        type=event_type,
-        agent=agent,
-        message=message,
-        data=dict(data),
-    ))
+    await session_manager.add_event(
+        session_id,
+        AgentEvent(
+            type=event_type,
+            agent=agent,
+            message=message,
+            data=dict(data),
+        ),
+    )
 
 
 async def run_analysis_demo(session_id: str, topic: str) -> None:
@@ -67,112 +76,191 @@ async def run_analysis_demo(session_id: str, topic: str) -> None:
     """
     # Phase 1: Planning
     await session_manager.update_status(session_id, SessionStatus.PLANNING)
-    await _emit(session_id, AgentEventType.AGENT_START, "planner",
-                f"Generating research plan for: {topic}")
+    await _emit(
+        session_id,
+        AgentEventType.AGENT_START,
+        "planner",
+        f"Generating research plan for: {topic}",
+    )
     await asyncio.sleep(0.8)
 
     plan = generate_mock_plan(topic)
-    await _emit(session_id, AgentEventType.AGENT_PROGRESS, "planner",
-                f"Found {len(plan.keywords)} keywords and {len(plan.search_queries)} search queries",
-                keywords=plan.keywords[:5], queries=plan.search_queries[:3])
+    await _emit(
+        session_id,
+        AgentEventType.AGENT_PROGRESS,
+        "planner",
+        f"Found {len(plan.keywords)} keywords and {len(plan.search_queries)} search queries",
+        keywords=plan.keywords[:5],
+        queries=plan.search_queries[:3],
+    )
     await asyncio.sleep(0.6)
 
-    await _emit(session_id, AgentEventType.AGENT_PROGRESS, "planner",
-                f"Identified {len(plan.platforms)} target platforms",
-                platforms=[p["name"] for p in plan.platforms])
+    await _emit(
+        session_id,
+        AgentEventType.AGENT_PROGRESS,
+        "planner",
+        f"Identified {len(plan.platforms)} target platforms",
+        platforms=[p["name"] for p in plan.platforms],
+    )
     await asyncio.sleep(0.4)
 
-    await _emit(session_id, AgentEventType.AGENT_COMPLETE, "planner",
-                "Research plan complete",
-                plan=plan.model_dump())
+    await _emit(
+        session_id,
+        AgentEventType.AGENT_COMPLETE,
+        "planner",
+        "Research plan complete",
+        plan=plan.model_dump(),
+    )
 
-    await session_manager.add_message(session_id, MessageRole.ASSISTANT,
+    await session_manager.add_message(
+        session_id,
+        MessageRole.ASSISTANT,
         f"**Research Plan Ready**\n\n"
         f"I've identified {len(plan.keywords)} keywords, "
         f"{len(plan.hashtags)} hashtags, and "
         f"{len(plan.search_queries)} search queries across "
         f"{len(plan.platforms)} platforms.\n\n"
-        f"Starting link harvesting...")
+        f"Starting link harvesting...",
+    )
 
     # Phase 2: Harvesting
     await session_manager.update_status(session_id, SessionStatus.SEARCHING)
-    await _emit(session_id, AgentEventType.AGENT_START, "harvester",
-                "Harvesting candidate links from search sources...")
+    await _emit(
+        session_id,
+        AgentEventType.AGENT_START,
+        "harvester",
+        "Harvesting candidate links from search sources...",
+    )
     await asyncio.sleep(0.5)
 
     total_links = 0
     for query in plan.search_queries[:4]:
         found = 15 + hash(query) % 20
         total_links += found
-        await _emit(session_id, AgentEventType.AGENT_PROGRESS, "harvester",
-                    f'Found {found} results for "{query}"',
-                    query=query, found=found, total=total_links)
+        await _emit(
+            session_id,
+            AgentEventType.AGENT_PROGRESS,
+            "harvester",
+            f'Found {found} results for "{query}"',
+            query=query,
+            found=found,
+            total=total_links,
+        )
         await asyncio.sleep(0.4)
 
     stored_links = max(total_links - max(5, total_links // 6), 0)
-    await _emit(session_id, AgentEventType.AGENT_COMPLETE, "harvester",
-                f"Harvesting complete: {stored_links} candidate links stored",
-                total_links=total_links, stored_links=stored_links)
+    await _emit(
+        session_id,
+        AgentEventType.AGENT_COMPLETE,
+        "harvester",
+        f"Harvesting complete: {stored_links} candidate links stored",
+        total_links=total_links,
+        stored_links=stored_links,
+    )
 
     # Phase 3: Scraping
     await session_manager.update_status(session_id, SessionStatus.SCRAPING)
-    await _emit(session_id, AgentEventType.AGENT_START, "scraper",
-                f"Deep scraping {total_links} URLs...")
+    await _emit(
+        session_id,
+        AgentEventType.AGENT_START,
+        "scraper",
+        f"Deep scraping {total_links} URLs...",
+    )
     await asyncio.sleep(0.5)
 
     scraped = 0
     for platform in ["reddit", "twitter", "news", "facebook"]:
         batch = 20 + hash(platform + topic) % 30
         scraped += batch
-        await _emit(session_id, AgentEventType.AGENT_PROGRESS, "scraper",
-                    f"Scraped {batch} posts from {platform}",
-                    platform=platform, batch_size=batch, total_scraped=scraped)
+        await _emit(
+            session_id,
+            AgentEventType.AGENT_PROGRESS,
+            "scraper",
+            f"Scraped {batch} posts from {platform}",
+            platform=platform,
+            batch_size=batch,
+            total_scraped=scraped,
+        )
         await asyncio.sleep(0.5)
 
-    await _emit(session_id, AgentEventType.AGENT_COMPLETE, "scraper",
-                f"Scraping complete: {scraped} posts collected",
-                total_scraped=scraped)
+    await _emit(
+        session_id,
+        AgentEventType.AGENT_COMPLETE,
+        "scraper",
+        f"Scraping complete: {scraped} posts collected",
+        total_scraped=scraped,
+    )
 
     # Phase 4: Cleaning
     await session_manager.update_status(session_id, SessionStatus.CLEANING)
-    await _emit(session_id, AgentEventType.AGENT_START, "cleaner",
-                "Cleaning and deduplicating collected data...")
+    await _emit(
+        session_id,
+        AgentEventType.AGENT_START,
+        "cleaner",
+        "Cleaning and deduplicating collected data...",
+    )
     await asyncio.sleep(0.5)
 
     duplicates = scraped // 8
     spam = scraped // 12
     clean_count = scraped - duplicates - spam
-    await _emit(session_id, AgentEventType.AGENT_PROGRESS, "cleaner",
-                f"Removed {duplicates} duplicates and {spam} spam posts",
-                duplicates=duplicates, spam=spam, remaining=clean_count)
+    await _emit(
+        session_id,
+        AgentEventType.AGENT_PROGRESS,
+        "cleaner",
+        f"Removed {duplicates} duplicates and {spam} spam posts",
+        duplicates=duplicates,
+        spam=spam,
+        remaining=clean_count,
+    )
     await asyncio.sleep(0.4)
 
-    await _emit(session_id, AgentEventType.AGENT_COMPLETE, "cleaner",
-                f"Cleaning complete: {clean_count} quality posts remaining",
-                clean_count=clean_count)
+    await _emit(
+        session_id,
+        AgentEventType.AGENT_COMPLETE,
+        "cleaner",
+        f"Cleaning complete: {clean_count} quality posts remaining",
+        clean_count=clean_count,
+    )
 
     # Phase 5: Analysis
     await session_manager.update_status(session_id, SessionStatus.ANALYSING)
-    await _emit(session_id, AgentEventType.AGENT_START, "analyser",
-                "Running sentiment analysis model...")
+    await _emit(
+        session_id,
+        AgentEventType.AGENT_START,
+        "analyser",
+        "Running sentiment analysis model...",
+    )
     await asyncio.sleep(0.5)
 
     for i in range(0, clean_count, max(1, clean_count // 4)):
         pct = min(100, int((i / clean_count) * 100))
-        await _emit(session_id, AgentEventType.AGENT_PROGRESS, "analyser",
-                    f"Analysed {i}/{clean_count} posts ({pct}%)",
-                    analysed=i, total=clean_count, percent=pct)
+        await _emit(
+            session_id,
+            AgentEventType.AGENT_PROGRESS,
+            "analyser",
+            f"Analysed {i}/{clean_count} posts ({pct}%)",
+            analysed=i,
+            total=clean_count,
+            percent=pct,
+        )
         await asyncio.sleep(0.3)
 
-    await _emit(session_id, AgentEventType.AGENT_COMPLETE, "analyser",
-                f"Sentiment analysis complete for {clean_count} posts",
-                analysed=clean_count)
+    await _emit(
+        session_id,
+        AgentEventType.AGENT_COMPLETE,
+        "analyser",
+        f"Sentiment analysis complete for {clean_count} posts",
+        analysed=clean_count,
+    )
 
     # Phase 6: Generate results and complete
     result = generate_mock_result(topic, post_count=min(clean_count, 150))
     await session_manager.set_result(session_id, result)
 
-    await session_manager.add_message(session_id, MessageRole.ASSISTANT,
+    await session_manager.add_message(
+        session_id,
+        MessageRole.ASSISTANT,
         f"**Analysis Complete!** 🎉\n\n"
         f"Processed **{result.summary.total_posts}** posts across "
         f"{len(result.platforms)} platforms.\n\n"
@@ -180,17 +268,22 @@ async def run_analysis_demo(session_id: str, topic: str) -> None:
         f"- Positive: {result.summary.positive_pct}%\n"
         f"- Neutral: {result.summary.neutral_pct}%\n"
         f"- Negative: {result.summary.negative_pct}%\n\n"
-        f"Switch to the **Dashboard** tab to explore the full results.")
+        f"Switch to the **Dashboard** tab to explore the full results.",
+    )
 
-    await _emit(session_id, AgentEventType.PIPELINE_COMPLETE, "orchestrator",
-                "Full analysis pipeline complete!",
-                summary={
-                    "total_posts": result.summary.total_posts,
-                    "avg_compound": result.summary.avg_compound,
-                    "positive_pct": result.summary.positive_pct,
-                    "negative_pct": result.summary.negative_pct,
-                    "neutral_pct": result.summary.neutral_pct,
-                })
+    await _emit(
+        session_id,
+        AgentEventType.PIPELINE_COMPLETE,
+        "orchestrator",
+        "Full analysis pipeline complete!",
+        summary={
+            "total_posts": result.summary.total_posts,
+            "avg_compound": result.summary.avg_compound,
+            "positive_pct": result.summary.positive_pct,
+            "negative_pct": result.summary.negative_pct,
+            "neutral_pct": result.summary.neutral_pct,
+        },
+    )
     await session_manager.update_status(session_id, SessionStatus.COMPLETED)
 
 
@@ -205,9 +298,19 @@ def _provider_ready(provider: str) -> tuple[bool, list[str]]:
 
     if normalized in {"google", "gemini", "genai"} and not config.get("GOOGLE_API_KEY"):
         reasons.append("GOOGLE_API_KEY is required for the selected Gemini provider.")
-    elif normalized in {"openai", "chatgpt", "gpt"} and not config.get("OPENAI_API_KEY"):
+    elif normalized in {"openai", "chatgpt", "gpt"} and not config.get(
+        "OPENAI_API_KEY"
+    ):
         reasons.append("OPENAI_API_KEY is required for the selected OpenAI provider.")
-    elif normalized not in {"google", "gemini", "genai", "openai", "chatgpt", "gpt", "ollama"}:
+    elif normalized not in {
+        "google",
+        "gemini",
+        "genai",
+        "openai",
+        "chatgpt",
+        "gpt",
+        "ollama",
+    }:
         reasons.append(f"Unsupported live provider: {provider}.")
 
     return not reasons, reasons
@@ -231,7 +334,9 @@ def _harvester_sources_ready() -> tuple[bool, list[str], list[str]]:
 
     if _bool_env("HARVESTER_ENABLE_SERPER", True) and config.get("SERPER_API_KEY"):
         available.append("serper")
-    if _bool_env("HARVESTER_ENABLE_FIRECRAWL", True) and config.get("FIRECRAWL_API_KEY"):
+    if _bool_env("HARVESTER_ENABLE_FIRECRAWL", True) and config.get(
+        "FIRECRAWL_API_KEY"
+    ):
         available.append("firecrawl")
     if _bool_env("HARVESTER_ENABLE_SERPAPI", False) and config.get("SERPAPI_API_KEY"):
         available.append("serpapi")
@@ -340,7 +445,9 @@ def _build_web_human_handler(session_id: str, loop: asyncio.AbstractEventLoop):
     return _handler
 
 
-async def run_analysis_live(session_id: str, topic: str, provider: str = "gemini", model: str | None = None) -> None:
+async def run_analysis_live(
+    session_id: str, topic: str, provider: str = "gemini", model: str | None = None
+) -> None:
     """Run the currently implemented live pipeline (requires API keys).
 
     This bridge should only reflect real implemented phases. Right now that is:
@@ -369,8 +476,13 @@ async def run_analysis_live(session_id: str, topic: str, provider: str = "gemini
     from utils.camoufox import camoufox_close_all_browsers
 
     await session_manager.update_status(session_id, SessionStatus.PLANNING)
-    await _emit(session_id, AgentEventType.AGENT_START, "orchestrator",
-                f"Running orchestrator for {topic}", sources=sources)
+    await _emit(
+        session_id,
+        AgentEventType.AGENT_START,
+        "orchestrator",
+        f"Running orchestrator for {topic}",
+        sources=sources,
+    )
 
     loop = asyncio.get_running_loop()
     set_human_input_handler(_build_web_human_handler(session_id, loop))
@@ -378,8 +490,13 @@ async def run_analysis_live(session_id: str, topic: str, provider: str = "gemini
     try:
         result = await asyncio.to_thread(orchestrator.invoke, topic)
     except Exception as exc:
-        await _emit(session_id, AgentEventType.ERROR, "orchestrator",
-                    f"Orchestrator failed: {exc}", error=str(exc))
+        await _emit(
+            session_id,
+            AgentEventType.ERROR,
+            "orchestrator",
+            f"Orchestrator failed: {exc}",
+            error=str(exc),
+        )
         await session_manager.update_status(session_id, SessionStatus.ERROR)
         return
     finally:
@@ -389,9 +506,13 @@ async def run_analysis_live(session_id: str, topic: str, provider: str = "gemini
         except Exception:
             pass
 
-    await _emit(session_id, AgentEventType.AGENT_COMPLETE, "orchestrator",
-                "Orchestrator run complete",
-                output=result.get("output"))
+    await _emit(
+        session_id,
+        AgentEventType.AGENT_COMPLETE,
+        "orchestrator",
+        "Orchestrator run complete",
+        output=result.get("output"),
+    )
 
     plan_data = _load_plan_data(topic)
     if plan_data is not None:
@@ -494,19 +615,23 @@ async def run_analysis_live(session_id: str, topic: str, provider: str = "gemini
             "phase": "cleaning",
         },
     )
-    await _emit(session_id, AgentEventType.PIPELINE_COMPLETE, "orchestrator",
-                "Planning, harvesting, scraping, and cleaning pipeline complete",
-                summary={
-                    "phase": "cleaning",
-                    "stored_links": harvested_links,
-                    "scraped_documents": scraped_documents,
-                    "reused_documents": reused_documents,
-                    "cleaned_documents": cleaned_documents,
-                    "duplicate_documents": duplicate_documents,
-                    "too_short_documents": too_short_documents,
-                    "keywords": planned_keywords,
-                    "queries": planned_queries,
-                })
+    await _emit(
+        session_id,
+        AgentEventType.PIPELINE_COMPLETE,
+        "orchestrator",
+        "Planning, harvesting, scraping, and cleaning pipeline complete",
+        summary={
+            "phase": "cleaning",
+            "stored_links": harvested_links,
+            "scraped_documents": scraped_documents,
+            "reused_documents": reused_documents,
+            "cleaned_documents": cleaned_documents,
+            "duplicate_documents": duplicate_documents,
+            "too_short_documents": too_short_documents,
+            "keywords": planned_keywords,
+            "queries": planned_queries,
+        },
+    )
     await session_manager.update_status(session_id, SessionStatus.COMPLETED)
 
 
@@ -531,10 +656,18 @@ async def run_analysis(
             await run_analysis_live(session_id, topic, provider, model)
     except Exception as exc:
         await session_manager.update_status(session_id, SessionStatus.ERROR)
-        await _emit(session_id, AgentEventType.ERROR, "orchestrator",
-                    f"Pipeline failed: {exc}", error=str(exc))
-        await session_manager.add_message(session_id, MessageRole.SYSTEM,
-            f"**Error**: {exc}\n\nPlease try again or use demo mode.")
+        await _emit(
+            session_id,
+            AgentEventType.ERROR,
+            "orchestrator",
+            f"Pipeline failed: {exc}",
+            error=str(exc),
+        )
+        await session_manager.add_message(
+            session_id,
+            MessageRole.SYSTEM,
+            f"**Error**: {exc}\n\nPlease try again or use demo mode.",
+        )
 
 
 def _sentiment_label(compound: float) -> str:

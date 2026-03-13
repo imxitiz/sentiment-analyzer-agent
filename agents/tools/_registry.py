@@ -33,6 +33,7 @@ logger = get_logger("agents.tools.registry")
 
 # ── Data structures ──────────────────────────────────────────────────
 
+
 @dataclass(frozen=True)
 class ToolEntry:
     """Metadata about a registered tool."""
@@ -50,6 +51,7 @@ _TOOL_REGISTRY: dict[str, ToolEntry] = {}
 
 # ── Registration ─────────────────────────────────────────────────────
 
+
 def register_tool(tool_obj: Any, *, category: str = "general") -> None:
     """Register an existing LangChain tool or callable.
 
@@ -62,7 +64,10 @@ def register_tool(tool_obj: Any, *, category: str = "general") -> None:
     desc = getattr(tool_obj, "description", getattr(tool_obj, "__doc__", ""))
 
     _TOOL_REGISTRY[name] = ToolEntry(
-        name=name, category=category, description=desc, tool=tool_obj,
+        name=name,
+        category=category,
+        description=desc,
+        tool=tool_obj,
     )
     logger.info("Registered tool  name=%s  category=%s", name, category)
 
@@ -80,6 +85,7 @@ def agent_tool(*, category: str = "general"):
     The decorated function becomes a LangChain ``StructuredTool`` and is
     automatically added to the tool registry.
     """
+
     def decorator(func):  # noqa: ANN001
         from langchain_core.tools import tool as lc_tool
 
@@ -91,6 +97,7 @@ def agent_tool(*, category: str = "general"):
 
 
 # ── Discovery ────────────────────────────────────────────────────────
+
 
 def get_tool(name: str) -> Any:
     """Get a registered tool by name.
@@ -111,9 +118,7 @@ def get_tools_by_category(category: str) -> list[Any]:
         List of LangChain tool objects.
     """
     return [
-        entry.tool
-        for entry in _TOOL_REGISTRY.values()
-        if entry.category == category
+        entry.tool for entry in _TOOL_REGISTRY.values() if entry.category == category
     ]
 
 
@@ -128,8 +133,7 @@ def list_tools(category: str | None = None) -> list[str]:
     """
     if category:
         return sorted(
-            name for name, entry in _TOOL_REGISTRY.items()
-            if entry.category == category
+            name for name, entry in _TOOL_REGISTRY.items() if entry.category == category
         )
     return sorted(_TOOL_REGISTRY.keys())
 

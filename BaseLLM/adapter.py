@@ -38,8 +38,8 @@ class BaseLLMAdapter(ABC):
     """
 
     # ── Subclass must override these ─────────────────────────────────
-    _provider: str = ""            # e.g. "google"
-    _default_model: str = ""       # e.g. "gemini-2.5-flash-lite"
+    _provider: str = ""  # e.g. "google"
+    _default_model: str = ""  # e.g. "gemini-2.5-flash-lite"
     _registry_models: tuple[str, ...] = ()
 
     def __init__(
@@ -174,8 +174,7 @@ class BaseLLMAdapter(ABC):
                 exc_info=True,
             )
             raise RuntimeError(
-                f"{self.__class__.__name__} generation failed "
-                f"({self._model}): {exc}"
+                f"{self.__class__.__name__} generation failed ({self._model}): {exc}"
             ) from exc
 
     async def agenerate(

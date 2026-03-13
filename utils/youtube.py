@@ -7,7 +7,9 @@ from typing import Any
 import requests
 
 
-def get_youtube_oembed(video_url: str, *, timeout_seconds: float = 20.0) -> dict[str, Any]:
+def get_youtube_oembed(
+    video_url: str, *, timeout_seconds: float = 20.0
+) -> dict[str, Any]:
     """Fetch video metadata through YouTube oEmbed endpoint."""
     response = requests.get(
         "https://www.youtube.com/oembed",

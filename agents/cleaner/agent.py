@@ -61,7 +61,9 @@ class CleanerAgent(BaseAgent):
         runtime = build_cleaning_runtime_config()
         store = build_cleaner_store()
         run_id = str(uuid.uuid4())
-        pending = store.load_pending_documents(topic=topic, limit=runtime.max_documents_per_run)
+        pending = store.load_pending_documents(
+            topic=topic, limit=runtime.max_documents_per_run
+        )
         plan = self._build_cleaning_plan(topic=topic, runtime=runtime, pending=pending)
 
         store.start_run(topic=topic, run_id=run_id, runtime=runtime, plan=plan)
@@ -96,7 +98,9 @@ class CleanerAgent(BaseAgent):
         if not pending:
             summary = "Cleaner found no pending documents to process."
             store.finish_run(run_id=run_id, status="completed", stats=stats)
-            self._checkpoint_agent_status(topic, status="completed", mark_completed=True)
+            self._checkpoint_agent_status(
+                topic, status="completed", mark_completed=True
+            )
             if latest_run_id:
                 record_orchestrator_event(
                     latest_run_id,
@@ -111,7 +115,9 @@ class CleanerAgent(BaseAgent):
         recovery_agent = CleanerRecoveryAgent(
             llm_provider=getattr(self.llm, "_provider", "dummy"),
         )
-        sample_ids = self._sample_document_ids(pending, runtime.sample_review_rate, runtime.max_sample_reviews)
+        sample_ids = self._sample_document_ids(
+            pending, runtime.sample_review_rate, runtime.max_sample_reviews
+        )
         semaphore = asyncio.Semaphore(runtime.max_concurrency)
 
         async def _worker(document: dict[str, Any]) -> dict[str, Any]:
@@ -124,11 +130,14 @@ class CleanerAgent(BaseAgent):
                     runtime=runtime,
                     plan=plan,
                     recovery_agent=recovery_agent,
-                    do_sample_review=str(document.get("document_id") or "") in sample_ids,
+                    do_sample_review=str(document.get("document_id") or "")
+                    in sample_ids,
                 )
 
         try:
-            results = await asyncio.gather(*[_worker(doc) for doc in pending], return_exceptions=True)
+            results = await asyncio.gather(
+                *[_worker(doc) for doc in pending], return_exceptions=True
+            )
             for result in results:
                 if isinstance(result, Exception):
                     stats["failed"] += 1
@@ -148,7 +157,9 @@ class CleanerAgent(BaseAgent):
 
             summary = self._format_summary(topic, stats)
             store.finish_run(run_id=run_id, status="completed", stats=stats)
-            self._checkpoint_agent_status(topic, status="completed", mark_completed=True)
+            self._checkpoint_agent_status(
+                topic, status="completed", mark_completed=True
+            )
             self._checkpoint_artifact(
                 topic=topic,
                 artifact_type="cleaner_summary",
@@ -208,7 +219,9 @@ class CleanerAgent(BaseAgent):
         if not document_id:
             return {"status": "failed", "reason": "missing_document_id"}
 
-        deterministic = await asyncio.to_thread(clean_document, document, runtime, plan=plan)
+        deterministic = await asyncio.to_thread(
+            clean_document, document, runtime, plan=plan
+        )
         fallback_used = False
 
         if deterministic.status == "accepted" and store.has_duplicate(
@@ -261,7 +274,10 @@ class CleanerAgent(BaseAgent):
                 )
 
         final = deterministic
-        if runtime.llm_fallback_enabled and deterministic.status in {"failed", "too_short"}:
+        if runtime.llm_fallback_enabled and deterministic.status in {
+            "failed",
+            "too_short",
+        }:
             recovered = await asyncio.to_thread(
                 self._recover_with_llm,
                 topic,
@@ -276,7 +292,11 @@ class CleanerAgent(BaseAgent):
                 fallback_used = True
 
         reviewed = False
-        if runtime.llm_fallback_enabled and do_sample_review and final.status == "accepted":
+        if (
+            runtime.llm_fallback_enabled
+            and do_sample_review
+            and final.status == "accepted"
+        ):
             reviewed = True
             reviewed_result = await asyncio.to_thread(
                 self._recover_with_llm,
@@ -326,15 +346,23 @@ class CleanerAgent(BaseAgent):
                     "platform": doc.get("platform"),
                     "title": str(doc.get("title") or "")[:300],
                     "description": str(doc.get("description") or "")[:300],
-                    "content_text_preview": str(doc.get("content_text") or "")[: runtime.llm_plan_max_chars_per_sample],
-                    "raw_text_preview": str(doc.get("raw_text") or "")[: runtime.llm_plan_max_chars_per_sample],
-                    "raw_html_preview": str(doc.get("raw_html") or "")[: runtime.llm_plan_max_chars_per_sample],
+                    "content_text_preview": str(doc.get("content_text") or "")[
+                        : runtime.llm_plan_max_chars_per_sample
+                    ],
+                    "raw_text_preview": str(doc.get("raw_text") or "")[
+                        : runtime.llm_plan_max_chars_per_sample
+                    ],
+                    "raw_html_preview": str(doc.get("raw_html") or "")[
+                        : runtime.llm_plan_max_chars_per_sample
+                    ],
                 }
                 for doc in sampled
             ],
         }
 
-        planner = CleanerPlannerAgent(llm_provider=getattr(self.llm, "_provider", "dummy"))
+        planner = CleanerPlannerAgent(
+            llm_provider=getattr(self.llm, "_provider", "dummy")
+        )
         try:
             result = planner.invoke(json.dumps(payload, ensure_ascii=False))
             plan = result.get("plan")
@@ -366,8 +394,12 @@ class CleanerAgent(BaseAgent):
             "document_id": document.get("document_id"),
             "platform": document.get("platform"),
             "title": document.get("title"),
-            "raw_text_preview": deterministic.source_text[: runtime.llm_fallback_max_chars],
-            "deterministic_cleaned_text": deterministic.cleaned_text[: runtime.llm_fallback_max_chars],
+            "raw_text_preview": deterministic.source_text[
+                : runtime.llm_fallback_max_chars
+            ],
+            "deterministic_cleaned_text": deterministic.cleaned_text[
+                : runtime.llm_fallback_max_chars
+            ],
             "failure_reason": deterministic.reason,
             "quality_flags": deterministic.quality_flags,
             "metrics": deterministic.metrics,
@@ -380,13 +412,17 @@ class CleanerAgent(BaseAgent):
             plan = response.get("recovery_plan")
             if plan is None:
                 return None
-            cleaned_text = str(plan.cleaned_text or "").strip() or deterministic.cleaned_text
+            cleaned_text = (
+                str(plan.cleaned_text or "").strip() or deterministic.cleaned_text
+            )
             if plan.status == "accepted" and cleaned_text:
                 clean_hash = deterministic.cleaned_hash
                 if not clean_hash and cleaned_text:
                     import hashlib
 
-                    clean_hash = hashlib.sha256(cleaned_text.encode("utf-8")).hexdigest()
+                    clean_hash = hashlib.sha256(
+                        cleaned_text.encode("utf-8")
+                    ).hexdigest()
                 return CleanerResult(
                     status="accepted",
                     cleaned_text=cleaned_text,
@@ -430,7 +466,11 @@ class CleanerAgent(BaseAgent):
         rate: float,
         max_reviews: int,
     ) -> set[str]:
-        ids = [str(doc.get("document_id") or "") for doc in documents if doc.get("document_id")]
+        ids = [
+            str(doc.get("document_id") or "")
+            for doc in documents
+            if doc.get("document_id")
+        ]
         if not ids:
             return set()
         sample_size = min(len(ids), max(0, max_reviews), max(1, int(len(ids) * rate)))

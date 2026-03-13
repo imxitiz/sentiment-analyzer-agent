@@ -97,9 +97,7 @@ def resolve_provider(name: str) -> str:
     canonical = _PROVIDER_ALIASES.get(name.lower())
     if canonical is None:
         known = ", ".join(sorted(_PROVIDER_ALIASES))
-        raise ValueError(
-            f"Unknown provider {name!r}. Known aliases: {known}"
-        )
+        raise ValueError(f"Unknown provider {name!r}. Known aliases: {known}")
     return canonical
 
 

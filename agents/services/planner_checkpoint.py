@@ -275,7 +275,9 @@ def upsert_agent_status(
                     started_at,
                     now,
                     now if mark_completed else None,
-                    json.dumps(merged_meta, ensure_ascii=False) if merged_meta else None,
+                    json.dumps(merged_meta, ensure_ascii=False)
+                    if merged_meta
+                    else None,
                     agent_name,
                 ),
             )

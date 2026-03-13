@@ -29,7 +29,9 @@ def _to_int(value: str | None, default: int, *, min_value: int = 1) -> int:
         return default
 
 
-def _to_float(value: str | None, default: float, *, min_value: float = 0.0, max_value: float = 1.0) -> float:
+def _to_float(
+    value: str | None, default: float, *, min_value: float = 0.0, max_value: float = 1.0
+) -> float:
     try:
         parsed = float(value or default)
     except (TypeError, ValueError):
@@ -51,7 +53,10 @@ def build_cleaning_runtime_config() -> CleaningRuntimeConfig:
         for part in preferred_languages_raw.split(",")
         if part.strip()
     ) or ("en",)
-    extraction_backends_raw = config.get("CLEANER_EXTRACTION_BACKENDS") or "content_fields,trafilatura,readability,bs4"
+    extraction_backends_raw = (
+        config.get("CLEANER_EXTRACTION_BACKENDS")
+        or "content_fields,trafilatura,readability,bs4"
+    )
     extraction_backends = tuple(
         part.strip().lower()
         for part in extraction_backends_raw.split(",")
@@ -64,26 +69,44 @@ def build_cleaning_runtime_config() -> CleaningRuntimeConfig:
         sample_review_rate=_to_float(config.get("CLEANER_SAMPLE_REVIEW_RATE"), 0.05),
         max_sample_reviews=_to_int(config.get("CLEANER_MAX_SAMPLE_REVIEWS"), 20),
         min_clean_chars=_to_int(config.get("CLEANER_MIN_CLEAN_CHARS"), 30, min_value=1),
-        max_clean_chars=_to_int(config.get("CLEANER_MAX_CLEAN_CHARS"), 12000, min_value=200),
+        max_clean_chars=_to_int(
+            config.get("CLEANER_MAX_CLEAN_CHARS"), 12000, min_value=200
+        ),
         remove_punctuation=_to_bool(config.get("CLEANER_REMOVE_PUNCTUATION"), True),
         lowercase_text=_to_bool(config.get("CLEANER_LOWERCASE_TEXT"), True),
-        replace_urls_with_token=_to_bool(config.get("CLEANER_REPLACE_URLS_WITH_TOKEN"), True),
-        replace_mentions_with_token=_to_bool(config.get("CLEANER_REPLACE_MENTIONS_WITH_TOKEN"), True),
-        preserve_case_for_shouting=_to_bool(config.get("CLEANER_PRESERVE_CASE_FOR_SHOUTING"), False),
+        replace_urls_with_token=_to_bool(
+            config.get("CLEANER_REPLACE_URLS_WITH_TOKEN"), True
+        ),
+        replace_mentions_with_token=_to_bool(
+            config.get("CLEANER_REPLACE_MENTIONS_WITH_TOKEN"), True
+        ),
+        preserve_case_for_shouting=_to_bool(
+            config.get("CLEANER_PRESERVE_CASE_FOR_SHOUTING"), False
+        ),
         extraction_backends=extraction_backends,
         min_alpha_ratio=_to_float(config.get("CLEANER_MIN_ALPHA_RATIO"), 0.35),
         max_url_ratio=_to_float(config.get("CLEANER_MAX_URL_RATIO"), 0.3),
         max_symbol_ratio=_to_float(config.get("CLEANER_MAX_SYMBOL_RATIO"), 0.35),
-        reject_non_preferred_languages=_to_bool(config.get("CLEANER_REJECT_NON_PREFERRED_LANGUAGES"), False),
+        reject_non_preferred_languages=_to_bool(
+            config.get("CLEANER_REJECT_NON_PREFERRED_LANGUAGES"), False
+        ),
         preferred_languages=preferred_languages,
         enable_fuzzy_dedupe=_to_bool(config.get("CLEANER_ENABLE_FUZZY_DEDUPE"), True),
-        fuzzy_dedupe_threshold=_to_float(config.get("CLEANER_FUZZY_DEDUPE_THRESHOLD"), 93.0, max_value=100.0),
+        fuzzy_dedupe_threshold=_to_float(
+            config.get("CLEANER_FUZZY_DEDUPE_THRESHOLD"), 93.0, max_value=100.0
+        ),
         fuzzy_candidate_limit=_to_int(config.get("CLEANER_FUZZY_CANDIDATE_LIMIT"), 250),
         llm_plan_enabled=_to_bool(config.get("CLEANER_LLM_PLAN_ENABLED"), True),
         llm_plan_sample_size=_to_int(config.get("CLEANER_LLM_PLAN_SAMPLE_SIZE"), 24),
-        llm_plan_max_chars_per_sample=_to_int(config.get("CLEANER_LLM_PLAN_MAX_CHARS_PER_SAMPLE"), 1600),
-        llm_fallback_max_chars=_to_int(config.get("CLEANER_LLM_FALLBACK_MAX_CHARS"), 2200),
-        llm_force_full_rewrite=_to_bool(config.get("CLEANER_LLM_FORCE_FULL_REWRITE"), False),
+        llm_plan_max_chars_per_sample=_to_int(
+            config.get("CLEANER_LLM_PLAN_MAX_CHARS_PER_SAMPLE"), 1600
+        ),
+        llm_fallback_max_chars=_to_int(
+            config.get("CLEANER_LLM_FALLBACK_MAX_CHARS"), 2200
+        ),
+        llm_force_full_rewrite=_to_bool(
+            config.get("CLEANER_LLM_FORCE_FULL_REWRITE"), False
+        ),
         llm_fallback_enabled=_to_bool(config.get("CLEANER_LLM_FALLBACK_ENABLED"), True),
     )
 
@@ -161,31 +184,37 @@ class CleanerDocumentStore:
 
     def load_pending_documents(self, *, topic: str, limit: int) -> list[dict[str, Any]]:
         topic_slug = db_path_for_topic(topic).stem
-        cursor = self._raw.find(
-            {
-                "topic_slugs": topic_slug,
-                "analysis_state.cleaning": {"$in": ["not_started", "failed"]},
-            },
-            {
-                "_id": 0,
-                "document_id": 1,
-                "topic": 1,
-                "topic_slugs": 1,
-                "platform": 1,
-                "canonical_url": 1,
-                "title": 1,
-                "description": 1,
-                "content_text": 1,
-                "raw_text": 1,
-                "raw_html": 1,
-                "markdown": 1,
-                "content_items": 1,
-                "updated_at": 1,
-            },
-        ).sort("updated_at", -1).limit(max(1, limit))
+        cursor = (
+            self._raw.find(
+                {
+                    "topic_slugs": topic_slug,
+                    "analysis_state.cleaning": {"$in": ["not_started", "failed"]},
+                },
+                {
+                    "_id": 0,
+                    "document_id": 1,
+                    "topic": 1,
+                    "topic_slugs": 1,
+                    "platform": 1,
+                    "canonical_url": 1,
+                    "title": 1,
+                    "description": 1,
+                    "content_text": 1,
+                    "raw_text": 1,
+                    "raw_html": 1,
+                    "markdown": 1,
+                    "content_items": 1,
+                    "updated_at": 1,
+                },
+            )
+            .sort("updated_at", -1)
+            .limit(max(1, limit))
+        )
         return list(cursor)
 
-    def has_duplicate(self, *, topic: str, cleaned_hash: str | None, document_id: str) -> bool:
+    def has_duplicate(
+        self, *, topic: str, cleaned_hash: str | None, document_id: str
+    ) -> bool:
         if not cleaned_hash:
             return False
         topic_slug = db_path_for_topic(topic).stem
@@ -213,14 +242,23 @@ class CleanerDocumentStore:
             return None
 
         topic_slug = db_path_for_topic(topic).stem
-        cursor = self._cleaned.find(
-            {
-                "topic_slug": topic_slug,
-                "status": "accepted",
-                "document_id": {"$ne": document_id},
-            },
-            {"document_id": 1, "cleaned_text": 1, "canonical_url": 1, "platform": 1},
-        ).sort("updated_at", -1).limit(max(1, candidate_limit))
+        cursor = (
+            self._cleaned.find(
+                {
+                    "topic_slug": topic_slug,
+                    "status": "accepted",
+                    "document_id": {"$ne": document_id},
+                },
+                {
+                    "document_id": 1,
+                    "cleaned_text": 1,
+                    "canonical_url": 1,
+                    "platform": 1,
+                },
+            )
+            .sort("updated_at", -1)
+            .limit(max(1, candidate_limit))
+        )
         candidates = list(cursor)
         if not candidates:
             return None
@@ -238,7 +276,8 @@ class CleanerDocumentStore:
         index_to_doc = {
             idx: doc
             for idx, doc in enumerate(candidates)
-            if isinstance(doc.get("cleaned_text"), str) and doc.get("cleaned_text", "").strip()
+            if isinstance(doc.get("cleaned_text"), str)
+            and doc.get("cleaned_text", "").strip()
         }
         if not index_to_doc:
             return None
@@ -275,7 +314,9 @@ class CleanerDocumentStore:
         now = _utc_now()
         document_id = str(document.get("document_id") or "")
         if not document_id:
-            raise ValueError("Document is missing document_id; cannot save clean result.")
+            raise ValueError(
+                "Document is missing document_id; cannot save clean result."
+            )
 
         clean_payload = {
             "version": 1,
@@ -284,7 +325,9 @@ class CleanerDocumentStore:
             "cleaned_text": result.cleaned_text,
             "sentiment_text": result.sentiment_text,
             "cleaned_hash": result.cleaned_hash,
-            "cleaned_signature": result.cleaned_hash[:16] if result.cleaned_hash else None,
+            "cleaned_signature": result.cleaned_hash[:16]
+            if result.cleaned_hash
+            else None,
             "source_text": result.source_text,
             "metrics": result.metrics,
             "quality_flags": result.quality_flags,
@@ -294,7 +337,9 @@ class CleanerDocumentStore:
             "updated_at": now,
         }
         analysis_state = {
-            "cleaning": "completed" if result.status in {"accepted", "duplicate", "too_short"} else "failed",
+            "cleaning": "completed"
+            if result.status in {"accepted", "duplicate", "too_short"}
+            else "failed",
             "cleaning_updated_at": now,
         }
 
@@ -304,7 +349,9 @@ class CleanerDocumentStore:
                 "$set": {
                     "cleaning": clean_payload,
                     "analysis_state.cleaning": analysis_state["cleaning"],
-                    "analysis_state.cleaning_updated_at": analysis_state["cleaning_updated_at"],
+                    "analysis_state.cleaning_updated_at": analysis_state[
+                        "cleaning_updated_at"
+                    ],
                     "updated_at": now,
                 }
             },
@@ -323,7 +370,9 @@ class CleanerDocumentStore:
                     "status": result.status,
                     "reason": result.reason,
                     "cleaned_hash": result.cleaned_hash,
-                    "cleaned_signature": result.cleaned_hash[:16] if result.cleaned_hash else None,
+                    "cleaned_signature": result.cleaned_hash[:16]
+                    if result.cleaned_hash
+                    else None,
                     "cleaned_text": result.cleaned_text,
                     "sentiment_text": result.sentiment_text,
                     "metrics": result.metrics,
@@ -347,7 +396,11 @@ class CleanerDocumentStore:
             result.status,
             source,
             action="save_clean_result",
-            meta={"document_id": document_id, "status": result.status, "source": source},
+            meta={
+                "document_id": document_id,
+                "status": result.status,
+                "source": source,
+            },
         )
         return {"raw": saved_raw, "cleaned": saved_cleaned}
 

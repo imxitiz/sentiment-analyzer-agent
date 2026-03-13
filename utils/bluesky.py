@@ -9,7 +9,9 @@ import requests
 PUBLIC_BSKY_API = "https://public.api.bsky.app/xrpc"
 
 
-def _get(path: str, *, params: dict[str, Any], timeout_seconds: float = 20.0) -> dict[str, Any]:
+def _get(
+    path: str, *, params: dict[str, Any], timeout_seconds: float = 20.0
+) -> dict[str, Any]:
     response = requests.get(
         f"{PUBLIC_BSKY_API}{path}",
         params=params,

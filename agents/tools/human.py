@@ -46,6 +46,7 @@ def clear_human_input_handler() -> None:
 
 # ── The tool ─────────────────────────────────────────────────────────
 
+
 @agent_tool(category="interaction")
 def ask_human(question: str) -> str:
     """Ask the human user for clarification or additional information.

@@ -94,14 +94,20 @@ async def start_analysis(
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    if session.status not in (SessionStatus.IDLE, SessionStatus.ERROR, SessionStatus.COMPLETED):
+    if session.status not in (
+        SessionStatus.IDLE,
+        SessionStatus.ERROR,
+        SessionStatus.COMPLETED,
+    ):
         raise HTTPException(
             status_code=409,
             detail=f"Session is already {session.status.value}. Wait for completion or create a new session.",
         )
 
     # Update topic if different
-    provider = req.llm_provider or session.llm_provider or server_config.DEFAULT_LLM_PROVIDER
+    provider = (
+        req.llm_provider or session.llm_provider or server_config.DEFAULT_LLM_PROVIDER
+    )
     session.topic = req.topic
     session.llm_provider = provider
 
@@ -110,13 +116,16 @@ async def start_analysis(
 
     # Add user message
     await session_manager.add_message(
-        session_id, MessageRole.USER, req.topic,
+        session_id,
+        MessageRole.USER,
+        req.topic,
     )
 
     # Add assistant acknowledgment
     await session_manager.add_message(
-        session_id, MessageRole.ASSISTANT,
-        f"Starting sentiment analysis for **\"{req.topic}\"**...\n\n"
+        session_id,
+        MessageRole.ASSISTANT,
+        f'Starting sentiment analysis for **"{req.topic}"**...\n\n'
         f"I'll generate a research plan and harvest candidate links first. "
         f"Later pipeline stages will be added incrementally.",
     )
@@ -172,8 +181,9 @@ async def refresh_analysis(
 
     # Add system message about the refresh
     await session_manager.add_message(
-        session_id, MessageRole.ASSISTANT,
-        f"**Refreshing analysis (v{session.version})** for **\"{topic}\"**…\n\n"
+        session_id,
+        MessageRole.ASSISTANT,
+        f'**Refreshing analysis (v{session.version})** for **"{topic}"**…\n\n'
         f"Re-collecting and re-analysing data to get the latest sentiment.",
     )
 
@@ -249,7 +259,9 @@ async def send_message(session_id: str, req: SendMessageRequest):
         raise HTTPException(status_code=404, detail="Session not found")
 
     await session_manager.add_message(
-        session_id, MessageRole.USER, req.content,
+        session_id,
+        MessageRole.USER,
+        req.content,
     )
 
     clarification_resumed = await session_manager.submit_clarification_response(
@@ -273,8 +285,9 @@ async def send_message(session_id: str, req: SendMessageRequest):
     if session.status == SessionStatus.COMPLETED and session.result:
         # Simple echo for now — future: RAG-powered responses
         await session_manager.add_message(
-            session_id, MessageRole.ASSISTANT,
-            f"Thanks for your question about **\"{session.topic}\"**.\n\n"
+            session_id,
+            MessageRole.ASSISTANT,
+            f'Thanks for your question about **"{session.topic}"**.\n\n'
             f"Based on the analysis of {session.result.summary.total_posts} posts, "
             f"the overall sentiment is "
             f"{'positive' if session.result.summary.avg_compound > 0.1 else 'negative' if session.result.summary.avg_compound < -0.1 else 'neutral'} "

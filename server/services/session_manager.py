@@ -64,12 +64,14 @@ class SessionManager:
 
         if topic:
             # Add initial user message
-            session.messages.append(ChatMessage(
-                id=str(uuid.uuid4())[:8],
-                role=MessageRole.USER,
-                content=topic,
-                timestamp=now,
-            ))
+            session.messages.append(
+                ChatMessage(
+                    id=str(uuid.uuid4())[:8],
+                    role=MessageRole.USER,
+                    content=topic,
+                    timestamp=now,
+                )
+            )
 
         async with self._lock:
             self._sessions[session_id] = session
@@ -110,11 +112,14 @@ class SessionManager:
             session.updated_at = datetime.now()
 
         # Emit status change event
-        await self.emit_event(session_id, AgentEvent(
-            type=AgentEventType.STATUS_CHANGE,
-            message=f"Status changed to {status.value}",
-            data={"status": status.value},
-        ))
+        await self.emit_event(
+            session_id,
+            AgentEvent(
+                type=AgentEventType.STATUS_CHANGE,
+                message=f"Status changed to {status.value}",
+                data={"status": status.value},
+            ),
+        )
 
         return session
 
@@ -178,7 +183,9 @@ class SessionManager:
         async with self._lock:
             existing = self._clarification_waiters.get(session_id)
             if existing and not existing.done():
-                raise RuntimeError("A clarification request is already pending for this session.")
+                raise RuntimeError(
+                    "A clarification request is already pending for this session."
+                )
 
             self._clarification_waiters[session_id] = future
             self._clarification_meta[session_id] = {
@@ -276,7 +283,9 @@ class SessionManager:
                 version=session.version,
                 result=session.result,
                 events=list(session.events),
-                started_at=session.created_at if session.version == 1 else session.updated_at,
+                started_at=session.created_at
+                if session.version == 1
+                else session.updated_at,
                 completed_at=datetime.now(),
             )
             session.version_history.append(snapshot)
@@ -327,7 +336,9 @@ class SessionManager:
                 version=session.version,
                 result=session.result,
                 events=list(session.events),
-                started_at=session.created_at if session.version == 1 else session.updated_at,
+                started_at=session.created_at
+                if session.version == 1
+                else session.updated_at,
                 completed_at=datetime.now(),
             )
             session.version_history[target_idx] = current_snap

@@ -22,7 +22,9 @@ def firecrawl_search_results(query: str, max_results: int = 10) -> str:
         data = search_firecrawl(query, limit=max_results, sources=["web", "news"])
         return json.dumps(data, ensure_ascii=False)
     except Exception as exc:
-        return json.dumps({"success": False, "error": str(exc), "query": query}, ensure_ascii=False)
+        return json.dumps(
+            {"success": False, "error": str(exc), "query": query}, ensure_ascii=False
+        )
 
 
 @agent_tool(category="browser")
@@ -31,7 +33,10 @@ def firecrawl_browser_collect_links(url: str, max_links: int = 40) -> str:
     session = create_firecrawl_browser_session(ttl=180, activity_ttl=90)
     session_id = str(session.get("id", ""))
     if not session_id:
-        return json.dumps({"success": False, "error": "Browser session creation failed."}, ensure_ascii=False)
+        return json.dumps(
+            {"success": False, "error": "Browser session creation failed."},
+            ensure_ascii=False,
+        )
 
     code = """
         await page.goto(%s, { waitUntil: 'domcontentloaded', timeout: 90000 });
@@ -48,9 +53,14 @@ def firecrawl_browser_collect_links(url: str, max_links: int = 40) -> str:
     """ % (json.dumps(url), max(1, min(int(max_links), 100)))
     try:
         result = execute_firecrawl_browser(session_id, code=code, language="node")
-        return json.dumps({"success": True, "url": url, "result": result.get("result", "[]")}, ensure_ascii=False)
+        return json.dumps(
+            {"success": True, "url": url, "result": result.get("result", "[]")},
+            ensure_ascii=False,
+        )
     except Exception as exc:
-        return json.dumps({"success": False, "error": str(exc), "url": url}, ensure_ascii=False)
+        return json.dumps(
+            {"success": False, "error": str(exc), "url": url}, ensure_ascii=False
+        )
 
 
 @agent_tool(category="search")
@@ -62,7 +72,9 @@ def serpapi_search_results(query: str, max_results: int = 10) -> str:
         data = search_serpapi(query, max_results=max_results)
         return json.dumps(data, ensure_ascii=False)
     except Exception as exc:
-        return json.dumps({"success": False, "error": str(exc), "query": query}, ensure_ascii=False)
+        return json.dumps(
+            {"success": False, "error": str(exc), "query": query}, ensure_ascii=False
+        )
 
 
 @agent_tool(category="browser")
@@ -82,9 +94,13 @@ def camoufox_browser_collect_links(url: str, max_links: int = 40) -> str:
         from utils.camoufox import camoufox_fetch_anchors
 
         payload = camoufox_fetch_anchors(url, max_links=max_links)
-        return json.dumps({"success": True, "url": url, "result": payload}, ensure_ascii=False)
+        return json.dumps(
+            {"success": True, "url": url, "result": payload}, ensure_ascii=False
+        )
     except Exception as exc:
-        return json.dumps({"success": False, "error": str(exc), "url": url}, ensure_ascii=False)
+        return json.dumps(
+            {"success": False, "error": str(exc), "url": url}, ensure_ascii=False
+        )
 
 
 @agent_tool(category="browser")
@@ -103,4 +119,6 @@ def crawlbase_fetch_page(url: str, javascript: bool = True) -> str:
             ensure_ascii=False,
         )
     except Exception as exc:
-        return json.dumps({"success": False, "error": str(exc), "url": url}, ensure_ascii=False)
+        return json.dumps(
+            {"success": False, "error": str(exc), "url": url}, ensure_ascii=False
+        )

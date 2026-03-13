@@ -54,6 +54,7 @@ logger = get_logger("agents.planner")
 
 # ── Structured output schema ─────────────────────────────────────────
 
+
 class PlatformStrategy(BaseModel):
     """A platform to search and why."""
 
@@ -93,6 +94,7 @@ class ResearchPlan(BaseModel):
 
 # ── Agent ─────────────────────────────────────────────────────────────
 
+
 @register_agent
 class PlannerAgent(BaseAgent):
     """Research planner — generates keywords, hashtags, and search strategy.
@@ -123,8 +125,10 @@ class PlannerAgent(BaseAgent):
             optionally ``plan`` (``ResearchPlan`` instance).
         """
         self._log.info(
-            "Planning for topic  len=%d", len(message),
-            action="plan", meta={"topic_preview": message[:100]},
+            "Planning for topic  len=%d",
+            len(message),
+            action="plan",
+            meta={"topic_preview": message[:100]},
         )
         topic = message.strip()
         init_topic_db(topic)
@@ -179,7 +183,8 @@ class PlannerAgent(BaseAgent):
             output = plan.model_dump_json(indent=2)
             self._log.success(
                 "Plan generated (structured)  keywords=%d  queries=%d",
-                len(plan.keywords), len(plan.search_queries),
+                len(plan.keywords),
+                len(plan.search_queries),
                 action="plan",
                 meta={
                     "keyword_count": len(plan.keywords),
@@ -202,7 +207,8 @@ class PlannerAgent(BaseAgent):
 
         except Exception as exc:
             self._log.warning(
-                "Structured output failed, falling back to text: %s", exc,
+                "Structured output failed, falling back to text: %s",
+                exc,
                 action="plan_fallback",
             )
             save_pipeline_artifact(
@@ -376,7 +382,8 @@ class PlannerAgent(BaseAgent):
         output = plan.model_dump_json(indent=2)
         self._log.success(
             "Demo plan generated  keywords=%d  queries=%d",
-            len(plan.keywords), len(plan.search_queries),
+            len(plan.keywords),
+            len(plan.search_queries),
             action="demo_plan",
             meta={"topic": topic, "demo": True},
         )

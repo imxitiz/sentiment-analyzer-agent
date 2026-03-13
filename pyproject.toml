@@ -29,6 +29,7 @@ dependencies = [
     "contractions>=0.1.73",
     "duckduckgo-search>=2.7.1",
     "langchain-community>=0.1.0",
+    "pre-commit>=4.5.1",
 ]
 
 [tool.pyrefly]
@@ -45,5 +46,6 @@ ignore = ["F401","E501"]
 [dependency-groups]
 dev = [
     "ipykernel>=7.2.0",
+    "pyrefly>=0.56.0",
     "uv>=0.10.3",
 ]

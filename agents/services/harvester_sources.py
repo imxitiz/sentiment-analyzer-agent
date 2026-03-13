@@ -407,7 +407,11 @@ async def collect_firecrawl_browser_results(
               }))
             );
             return JSON.stringify(anchors);
-        """ % (json.dumps(search_url), runtime.source_timeout_seconds * 1000, runtime.expansion_per_seed_limit)
+        """ % (
+            json.dumps(search_url),
+            runtime.source_timeout_seconds * 1000,
+            runtime.expansion_per_seed_limit,
+        )
         try:
             execution = await asyncio.to_thread(
                 execute_firecrawl_browser,
@@ -417,7 +421,9 @@ async def collect_firecrawl_browser_results(
                 timeout_seconds=max(30.0, float(runtime.source_timeout_seconds)),
             )
             raw_result = execution.get("result", "[]")
-            anchors = json.loads(raw_result) if isinstance(raw_result, str) else raw_result
+            anchors = (
+                json.loads(raw_result) if isinstance(raw_result, str) else raw_result
+            )
             for item in anchors:
                 url = item.get("href", "")
                 if not normalize_url(url):
@@ -435,7 +441,10 @@ async def collect_firecrawl_browser_results(
                         domain=extract_domain(url),
                         quality_signal=0.08,
                         relevance_signal=0.08,
-                        metadata={"search_page": search_url, "anchor_text": item.get("text", "")},
+                        metadata={
+                            "search_page": search_url,
+                            "anchor_text": item.get("text", ""),
+                        },
                         raw_payload=item,
                     )
                 )
@@ -485,7 +494,9 @@ async def expand_with_crawlbase(
             )
             parser = _AnchorExtractor()
             parser.feed(str(payload.get("content", "")))
-            for index, item in enumerate(parser.links[: runtime.expansion_per_seed_limit], start=1):
+            for index, item in enumerate(
+                parser.links[: runtime.expansion_per_seed_limit], start=1
+            ):
                 joined = urljoin(seed.url, item.get("href", ""))
                 if not normalize_url(joined):
                     continue
@@ -502,7 +513,10 @@ async def expand_with_crawlbase(
                         domain=extract_domain(joined),
                         quality_signal=0.03,
                         relevance_signal=0.02,
-                        metadata={"anchor_text": item.get("text", ""), "seed_url": seed.url},
+                        metadata={
+                            "anchor_text": item.get("text", ""),
+                            "seed_url": seed.url,
+                        },
                         raw_payload=item,
                     )
                 )
