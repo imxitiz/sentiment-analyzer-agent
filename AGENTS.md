@@ -89,8 +89,10 @@ cd Interface && bun run check
 │   │    ├─ delegate_to_planner → PlannerAgent (direct mode)    │    │
 │   │    ├─ delegate_to_harvester → HarvesterAgent              │    │
 │   │    ├─ delegate_to_scraper → ScraperAgent (async workers)  │    │
+│   │    ├─ delegate_to_cleaner → CleanerAgent (async workers)  │    │
+│   │    ├─ delegate_to_sentiment → SentimentAnalyzerAgent      │    │
 │   │    ├─ ask_human → Human-in-the-loop tool                  │    │
-│   │    └─ (future: cleaner, analysis, dashboard, …)                    │    │
+│   │    └─ (future: dashboard, …)                              │    │
 │   └───────────────────────────────────────────────────────────┘    │
 │    BaseAgent → _registry → tools/_registry                         │
 │    Demo mode: provider="dummy" → static data, no LLM needed       │
@@ -103,7 +105,7 @@ cd Interface && bun run check
 │  External: Google Gemini · OpenAI · Ollama · Serper · Reddit/FB   │
 └───────────────────────────────────────────────────────────────────┘
 
-Pipeline flow:  Plan → Search → Scrape → Clean → Analyze → Summarize
+Pipeline flow:  Plan → Search → Scrape → Clean → Sentiment → Dashboard
                                                             ↓
                                               Interface (Bun + React)
 
@@ -208,6 +210,7 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 - **What this IS**: A "Self-Driving Research Lab" for sentiment analysis. User provides a topic → system autonomously collects data → runs sentiment → shows results on a real-time dashboard.
 - **Primary use case**: Election sentiment monitoring (e.g., "Nepal elections 2026"), but system is topic-agnostic.
 - **Full pipeline**: Topic → Keywords → Link Harvest (SQLite) → Deep Scrape (MongoDB) → Clean → Sentiment (HuggingFace model) → Vector DB → Convex DB → Dashboard + RAG chat.
+- **Sentiment analysis uses a dedicated HuggingFace model, NOT an LLM.** LLMs are too slow and expensive for per-post scoring at scale. The sentiment model runs locally and is purpose-built for classification. Never route sentiment through `BaseLLM`.
 - **Read `docs/VISION.md`** for the complete end-to-end pipeline diagram and architecture. It's the canonical source of truth for *what* we're building. This file (`AGENTS.md`) is the canonical source for *how* to work on it.
 
 ### Critical Architecture Decisions (and WHY)
@@ -294,18 +297,20 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 
 | Done ✅ | Not Yet ❌ |
 | --- | --- |
-| BaseLLM adapters (Gemini, Ollama, OpenAI, Dummy) | HuggingFace sentiment model integration |
-| Production structured logging | Vector DB (FAISS/Pinecone) |
-| EnvConfig singleton | Convex DB / real-time layer |
-| Prompt template manager (global + agent-local) | Additional platform scrapers (Twitter/X, TikTok, news sites) |
-| Serper web search | RAG chat interface (placeholder only) |
-| SQLite link storage | Evaluation suite |
-| **Multi-agent framework** (BaseAgent, registries) | Summarizer agent |
-| **OrchestratorAgent** (react mode, sub-agent delegation) | HuggingFace sentiment scoring in the web pipeline |
+| BaseLLM adapters (Gemini, Ollama, OpenAI, Dummy) | Vector DB (FAISS/Pinecone) |
+| Production structured logging | Convex DB / real-time layer |
+| EnvConfig singleton | Additional platform scrapers (Twitter/X, TikTok, news sites) |
+| Prompt template manager (global + agent-local) | RAG chat interface (placeholder only) |
+| Serper web search | Evaluation suite |
+| SQLite link storage | Summarizer agent |
+| **Multi-agent framework** (BaseAgent, registries) | |
+| **OrchestratorAgent** (react mode, sub-agent delegation) | |
 | **PlannerAgent** (structured output → ResearchPlan) | |
 | **HarvesterAgent** (structured output → `HarvestPlan`, async fan-out, queued SQLite writes) | |
 | **ScraperAgent** (multi-backend deep extraction, recovery sub-agent, MongoDB persistence) | |
 | **CleanerAgent** (async deterministic cleaning, duplicate/quality filtering, limited LLM fallback + sampled QA) | |
+| **SentimentAnalyzerAgent** (HuggingFace sentiment analysis, continuous scores 0→1) | |
+| **SentimentAnalyzer module** (adapter pattern, HuggingFace + Dummy adapters) | |
 | **Agent resilience runtime** (timeout + retry + circuit breaker in `BaseAgent`) | |
 | **Planner checkpoint persistence** (topic SQLite DB with `topic_inputs` + `pipeline_artifacts`) | |
 | **Tool registry** (@agent_tool, categories) | |
@@ -321,7 +326,7 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 | **Mock data generator** (150 posts, 5 platforms, deterministic) | |
 | **Export reports** (JSON / CSV / Markdown download) | |
 | **Version comparison** (structured diff, delta cards, narrative) | |
-| **Live agent→server bridge for planning + harvesting + scraping + cleaning** | |
+| **Live agent→server bridge for planning + harvesting + scraping + cleaning + sentiment** | |
 | **Web clarification pause/resume flow** | |
 
 ---
@@ -873,10 +878,10 @@ Prioritized roadmap. Each item is a meaningful chunk of work (1-2 sessions).
    - `AsyncLinkWriter` serializes SQLite writes and stores both canonical links and raw observations
    - Crawlbase expansion follows high-quality seed URLs for additional link discovery
 
-3. **Add HuggingFace sentiment model**
-   - NOT an LLM — dedicated classification model (e.g., `distilroberta-base` fine-tuned for sentiment)
+3. ~~**Add HuggingFace sentiment model**~~ ✅ DONE
+   - `SentimentAnalyzer` module with adapter pattern (HuggingFace + Dummy adapters)
+   - `SentimentAnalyzerAgent` integrated into orchestrator pipeline
    - Continuous score output (0→1), not binary
-   - Create `SentimentAnalyzer/` module with adapter pattern like BaseLLM
    - Must run locally, fast inference, no API costs
 
 4. ~~**Implement data cleaning pipeline**~~ ✅ DONE

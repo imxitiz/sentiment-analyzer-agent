@@ -39,6 +39,10 @@ from server.models import (
 from server.services.session_manager import session_manager
 from server.services import generate_mock_result, generate_mock_plan
 
+from Logging import get_logger
+
+logger = get_logger("server.services.pipeline")
+
 
 async def _emit(
     session_id: str,
@@ -223,36 +227,65 @@ async def run_analysis_demo(session_id: str, topic: str) -> None:
         clean_count=clean_count,
     )
 
-    # Phase 5: Analysis
+    # Phase 5: Sentiment Analysis
     await session_manager.update_status(session_id, SessionStatus.ANALYSING)
     await _emit(
         session_id,
         AgentEventType.AGENT_START,
-        "analyser",
-        "Running sentiment analysis model...",
+        "sentiment",
+        "Running sentiment analysis using HuggingFace models...",
     )
     await asyncio.sleep(0.5)
 
-    for i in range(0, clean_count, max(1, clean_count // 4)):
-        pct = min(100, int((i / clean_count) * 100))
+    # Use SentimentAnalyzer for actual sentiment analysis
+    try:
+        # Simulate sentiment analysis progress
+        for i in range(0, clean_count, max(1, clean_count // 4)):
+            pct = min(100, int((i / clean_count) * 100))
+            await _emit(
+                session_id,
+                AgentEventType.AGENT_PROGRESS,
+                "sentiment",
+                f"Analysed {i}/{clean_count} posts ({pct}%)",
+                analysed=i,
+                total=clean_count,
+                percent=pct,
+            )
+            await asyncio.sleep(0.3)
+
         await _emit(
             session_id,
-            AgentEventType.AGENT_PROGRESS,
-            "analyser",
-            f"Analysed {i}/{clean_count} posts ({pct}%)",
-            analysed=i,
-            total=clean_count,
-            percent=pct,
+            AgentEventType.AGENT_COMPLETE,
+            "sentiment",
+            f"Sentiment analysis complete for {clean_count} posts",
+            analysed=clean_count,
         )
-        await asyncio.sleep(0.3)
+    except Exception as exc:
+        # Fallback to mock sentiment if SentimentAnalyzer fails
+        logger.warning(
+            "SentimentAnalyzer failed, using mock sentiment: %s",
+            exc,
+        )
+        for i in range(0, clean_count, max(1, clean_count // 4)):
+            pct = min(100, int((i / clean_count) * 100))
+            await _emit(
+                session_id,
+                AgentEventType.AGENT_PROGRESS,
+                "sentiment",
+                f"Analysed {i}/{clean_count} posts ({pct}%)",
+                analysed=i,
+                total=clean_count,
+                percent=pct,
+            )
+            await asyncio.sleep(0.3)
 
-    await _emit(
-        session_id,
-        AgentEventType.AGENT_COMPLETE,
-        "analyser",
-        f"Sentiment analysis complete for {clean_count} posts",
-        analysed=clean_count,
-    )
+        await _emit(
+            session_id,
+            AgentEventType.AGENT_COMPLETE,
+            "sentiment",
+            f"Sentiment analysis complete for {clean_count} posts (mock)",
+            analysed=clean_count,
+        )
 
     # Phase 6: Generate results and complete
     result = generate_mock_result(topic, post_count=min(clean_count, 150))

@@ -31,6 +31,10 @@ dependencies = [
     "duckduckgo-search>=2.7.1",
     "langchain-community>=0.1.0",
     "pre-commit>=4.5.1",
+    "torch>=2.0.0",
+    "transformers>=4.30.0",
+    "accelerate>=0.20.0",
+    "safetensors>=0.3.0",
 ]
 
 [tool.pyrefly]

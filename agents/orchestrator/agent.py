@@ -80,6 +80,7 @@ class OrchestratorAgent(BaseAgent):
             from agents.harvester.agent import HarvesterAgent
             from agents.planner.agent import PlannerAgent
             from agents.scraper.agent import ScraperAgent
+            from agents.sentiment.agent import SentimentAnalyzerAgent
 
             forwarded = {k: v for k, v in kwargs.items() if k in ("llm_provider",)}
             sub_agents = [
@@ -87,6 +88,7 @@ class OrchestratorAgent(BaseAgent):
                 HarvesterAgent(**forwarded),
                 ScraperAgent(**forwarded),
                 CleanerAgent(**forwarded),
+                SentimentAnalyzerAgent(**forwarded),
             ]
 
         self._sub_agents = sub_agents

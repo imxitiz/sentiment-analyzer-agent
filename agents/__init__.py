@@ -34,6 +34,7 @@ from .harvester import HarvesterAgent, HarvestPlan, HarvestTaskPlan
 from .planner import PlannerAgent, ResearchPlan
 from .scraper import ScraperAgent, ScrapeRuntimeConfig, ScrapeTarget, ScrapedContent
 from .cleaner import CleanerAgent, CleanerPlan, CleaningRuntimeConfig, CleanerResult
+from .sentiment import SentimentAnalyzerAgent
 
 __all__ = [
     # Base
@@ -59,4 +60,5 @@ __all__ = [
     "CleanerPlan",
     "CleaningRuntimeConfig",
     "CleanerResult",
+    "SentimentAnalyzerAgent",
 ]
