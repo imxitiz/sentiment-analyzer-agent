@@ -310,7 +310,7 @@ class BaseAgent(ABC):
         # Copilot's bind_tools returns a Runnable, which is compatible at runtime
         # but triggers type checkers. Cast to Any to keep typing clean.
         return create_agent(
-            chat_model,  # type: ignore[arg-type]
+            self._llm_adapter.chat_model,
             tools=tools,
             system_prompt=prompt,
             name=self._name,
@@ -640,8 +640,19 @@ class BaseAgent(ABC):
         *,
         timeout_seconds: int,
     ) -> dict[str, Any]:
+        def _run_fn_with_event_loop() -> dict[str, Any]:
+            # Some chat model adapters rely on asyncio.get_event_loop() even in
+            # sync paths. ThreadPool workers do not have a loop by default.
+            loop = asyncio.new_event_loop()
+            try:
+                asyncio.set_event_loop(loop)
+                return fn()
+            finally:
+                asyncio.set_event_loop(None)
+                loop.close()
+
         with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(fn)
+            future = executor.submit(_run_fn_with_event_loop)
             try:
                 return future.result(timeout=timeout_seconds)
             except FutureTimeoutError as exc:
