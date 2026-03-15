@@ -33,6 +33,11 @@ from .cleaner_store import (
     build_cleaning_runtime_config,
     load_latest_clean_stats,
 )
+from .sentiment_store import (
+    build_sentiment_runtime_config,
+    build_sentiment_store,
+    load_latest_sentiment_stats,
+)
 from .scraper_sources import (
     available_scrape_backends,
     build_backend_plan,
@@ -72,6 +77,8 @@ __all__ = [
     "build_backend_plan",
     "build_document_store",
     "build_scrape_runtime_config",
+    "build_sentiment_runtime_config",
+    "build_sentiment_store",
     "collect_firecrawl_browser_results",
     "collect_firecrawl_results",
     "collect_serper_results",
@@ -90,6 +97,7 @@ __all__ = [
     "load_research_brief",
     "load_latest_clean_stats",
     "load_latest_scrape_stats",
+    "load_latest_sentiment_stats",
     "load_scrape_targets",
     "record_orchestrator_event",
     "registered_scrape_backends",

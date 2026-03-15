@@ -3,7 +3,7 @@ name = "sentiment-analyzer-agent"
 version = "0.1.0"
 description = "End-to-end multi-agent system for sentiment analysis of social media content, built with LangChain"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "requests>=2.32.5",
     "langchain>=1.2.10",
@@ -31,7 +31,7 @@ dependencies = [
     "duckduckgo-search>=2.7.1",
     "langchain-community>=0.1.0",
     "pre-commit>=4.5.1",
-    "torch>=2.0.0",
+    "torch>=2.6.0",
     "transformers>=4.30.0",
     "accelerate>=0.20.0",
     "safetensors>=0.3.0",

@@ -172,6 +172,7 @@ Pipeline flow:  Plan → Search → Scrape → Clean → Sentiment → Dashboard
 | `agents/cleaner/recovery.py` | Recovery sub-agent — limited LLM fallback/review for failed or sampled clean outputs |
 | `agents/services/cleaner_text.py` | Adaptive deterministic cleaning pipeline (multi-backend extraction, emoji meaning, contractions, quality gates, language checks) |
 | `agents/services/cleaner_store.py` | Mongo cleaner persistence (`cleaned_documents`, `clean_runs`) + runtime config loader + optional fuzzy near-dedupe lookup |
+| `agents/services/sentiment_store.py` | Mongo sentiment persistence (`sentiment_results`, `sentiment_summaries`, `sentiment_runs`) + runtime config loader |
 | `agents/<name>/prompts/` | Agent-local prompt templates (`system.txt`, etc.) |
 | `BaseLLM/` | Unified LLM abstraction layer (Gemini, Ollama, OpenAI, Dummy) |
 | `BaseLLM/adapter.py` | `BaseLLMAdapter` ABC — DRY base with sync/async generate |
@@ -227,6 +228,9 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 - **To test the current implemented pipeline end-to-end**: `uv run python main.py --demo -t "any topic"` — runs orchestrator → planner → harvester → scraper with static fallbacks, no API keys needed.
 - **To test the entire BaseLLM chain**: `get_llm("dummy").generate("test")` → returns `[DUMMY-LLM] test`. No API keys needed.
 - **The `python` command may not work** on some setups — use `python3` explicitly if `python` produces no output.
+- **Torch does not ship cp313 wheels yet**. GPU sentiment testing currently requires Python 3.12 (use `.venv-py312` or another 3.12 venv).
+- **Transformers now requires `torch>=2.6` to load `.bin` weights** due to CVE-2025-32434, and the Cardiff model ships `pytorch_model.bin` (no safetensors). Upgrade torch or pick a safetensors model.
+- **GPU smoke test script** lives at `ForTesting/sentiment_gpu_smoke.py`, and a full run log is documented in `docs/testing/sentiment_gpu_smoke.md`.
 - **`BaseLLM/_registry.py`** is the single source of truth for all model names, providers, and aliases. If you need to add a model, start there.
 - **`agents/_registry.py`** auto-registers agents by their `_name` via `@register_agent` decorator. Import the agent module → it's registered.
 - **`agents/tools/_registry.py`** auto-registers tools via `@agent_tool(category="...")` decorator. Category-based discovery.
@@ -281,6 +285,9 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 - **Cleaner run telemetry**: each run writes `clean_runs` with runtime config + optional `plan` + stats (`accepted`, `duplicate`, `too_short`, `failed`, fallback usage, sampled reviews, plan confidence) and is surfaced in web live pipeline events.
 - **Near-duplicate suppression is optional and package-aware**: fuzzy dedupe uses RapidFuzz if available (`CLEANER_ENABLE_FUZZY_DEDUPE`), and gracefully degrades when the dependency is not installed.
 - **Cleaner dependencies**: `ftfy` (Unicode/mojibake repair), `emoji` (emoji-to-text conversion), and `contractions` (expansion) were added to `pyproject.toml`.
+- **Sentiment persistence and runtime config**: sentiment phase is backed by `agents/services/sentiment_store.py`, which writes `sentiment_runs`, `sentiment_results`, and `sentiment_summaries`, and updates `analysis_state.sentiment` on both `cleaned_documents` and `scraped_documents`. Runtime is env-driven via `SENTIMENT_*` flags (provider/model/device, batch/concurrency, thresholds, planner + fallback budgets).
+- **HuggingFace sentiment adapter behavior**: `SentimentAnalyzer/huggingface_adapter.py` uses the `text-classification` pipeline (the typed alias for sentiment analysis), normalizes device args (`-1` for CPU, `torch.device` for CUDA/MPS), and safely handles `return_all_scores` or empty outputs when normalizing scores.
+- **GPU smoke test helper**: `ForTesting/sentiment_gpu_smoke.py` is a quick UV-friendly script to check HuggingFace sentiment on CPU/GPU, report detected torch/CUDA/MPS, and measure batch throughput.
 - **MongoDB connection**: `utils/mongodb.py` provides a lazy singleton `MongoClient`. Config via `MONGODB_URI` (full URI) or `MONGODB_HOST`+`MONGODB_PORT`. Database name via `MONGODB_DATABASE` (default: `sentiment_analyzer`). `pymongo>=4.12` is required.
 - **Mongo document indexes now include reuse/search helpers**: both `scrape_targets` and `scraped_documents` store `normalized_url_hash` and index it; documents also index `document_id`, `authors.name`, `references.url`, `content_items.item_id`, and `(topic_slugs, platform, published_at)` for downstream filtering and reuse lookup.
 

@@ -16,10 +16,10 @@ Usage
         get_model_info,
     )
 
-    all_models()                    # → ["distilroberta-base", "cardiffnlp/twitter-roberta-base-sentiment-latest", ...]
-    models_for("huggingface")       # → ["distilroberta-base", "cardiffnlp/twitter-roberta-base-sentiment-latest", ...]
-    default_model("huggingface")    # → "distilroberta-base"
-    get_model_info("distilroberta-base")  # → {"name": ..., "provider": ..., "description": ...}
+    all_models()                    # → ["cardiffnlp/twitter-roberta-base-sentiment-latest", ...]
+    models_for("huggingface")       # → ["cardiffnlp/twitter-roberta-base-sentiment-latest", ...]
+    default_model("huggingface")    # → "cardiffnlp/twitter-roberta-base-sentiment-latest"
+    get_model_info("cardiffnlp/twitter-roberta-base-sentiment-latest")  # → {"name": ..., "provider": ..., "description": ...}
 """
 
 from __future__ import annotations
@@ -30,28 +30,28 @@ from typing import Any
 
 SENTIMENT_MODELS: dict[str, list[str]] = {
     "huggingface": [
-        "distilroberta-base",
         "cardiffnlp/twitter-roberta-base-sentiment-latest",
+        "distilbert-base-uncased-finetuned-sst-2-english",
         "nlptown/bert-base-multilingual-uncased-sentiment",
     ],
     "dummy": ["dummy-model"],
 }
 
 MODEL_INFO: dict[str, dict[str, Any]] = {
-    "distilroberta-base": {
-        "name": "distilroberta-base",
-        "provider": "huggingface",
-        "description": "Fast, lightweight sentiment model based on DistilRoBERTa",
-        "default": True,
-        "labels": ["negative", "neutral", "positive"],
-        "score_range": [0.0, 1.0],
-    },
     "cardiffnlp/twitter-roberta-base-sentiment-latest": {
         "name": "cardiffnlp/twitter-roberta-base-sentiment-latest",
         "provider": "huggingface",
         "description": "Twitter-optimized sentiment model from Cardiff NLP",
-        "default": False,
+        "default": True,
         "labels": ["negative", "neutral", "positive"],
+        "score_range": [0.0, 1.0],
+    },
+    "distilbert-base-uncased-finetuned-sst-2-english": {
+        "name": "distilbert-base-uncased-finetuned-sst-2-english",
+        "provider": "huggingface",
+        "description": "Fast SST-2 sentiment model (binary positive/negative).",
+        "default": False,
+        "labels": ["negative", "positive"],
         "score_range": [0.0, 1.0],
     },
     "nlptown/bert-base-multilingual-uncased-sentiment": {
@@ -148,7 +148,7 @@ def get_model_info(model_name: str) -> dict[str, Any]:
     Parameters
     ----------
     model_name : str
-        Model name (e.g., "distilroberta-base").
+        Model name (e.g., "cardiffnlp/twitter-roberta-base-sentiment-latest").
 
     Returns
     -------

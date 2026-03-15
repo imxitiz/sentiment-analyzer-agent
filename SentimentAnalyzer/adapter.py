@@ -95,7 +95,7 @@ class BaseSentimentAdapter(ABC):
 
     # ── Subclass must override these ─────────────────────────────────
     _provider: str = ""  # e.g. "huggingface"
-    _default_model: str = ""  # e.g. "distilroberta-base"
+    _default_model: str = ""  # e.g. "cardiffnlp/twitter-roberta-base-sentiment-latest"
     _registry_models: tuple[str, ...] = ()
 
     def __init__(

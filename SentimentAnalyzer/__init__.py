@@ -25,8 +25,8 @@ Quick-start
 
 Available models
 ----------------
-    • ``distilroberta-base`` – Fast, lightweight (default)
-    • ``cardiffnlp/twitter-roberta-base-sentiment-latest`` – Twitter-optimized
+    • ``cardiffnlp/twitter-roberta-base-sentiment-latest`` – Twitter-optimized (default)
+    • ``distilbert-base-uncased-finetuned-sst-2-english`` – Fast, lightweight
     • ``nlptown/bert-base-multilingual-uncased-sentiment`` – Multilingual (1-5 stars)
     • ``dummy`` – Zero-dependency testing stub
 

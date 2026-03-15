@@ -8,7 +8,7 @@ Usage
 -----
     from SentimentAnalyzer import get_sentiment_analyzer
 
-    # Default model (distilroberta-base)
+    # Default model (cardiffnlp/twitter-roberta-base-sentiment-latest)
     analyzer = get_sentiment_analyzer()
     result = analyzer.analyze("I love this product!")
     print(f"Score: {result.score:.3f}, Label: {result.label}")
@@ -23,7 +23,7 @@ Usage
 
 Requirements
 ------------
-    pip install transformers torch
+    pip install "transformers>=4.30.0" "torch>=2.6.0"
 
     Or install via project dependencies:
     uv sync
@@ -31,7 +31,7 @@ Requirements
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, cast
 
 from .adapter import BaseSentimentAdapter
 
@@ -45,7 +45,8 @@ class HuggingFaceAdapter(BaseSentimentAdapter):
     Parameters
     ----------
     model : str, optional
-        HuggingFace model name. Defaults to "distilroberta-base".
+        HuggingFace model name. Defaults to
+        "cardiffnlp/twitter-roberta-base-sentiment-latest".
     device : str, optional
         Device to use ("cpu", "cuda", "mps"). Defaults to auto-detection.
     batch_size : int
@@ -53,10 +54,10 @@ class HuggingFaceAdapter(BaseSentimentAdapter):
     """
 
     _provider = "huggingface"
-    _default_model = "distilroberta-base"
+    _default_model = "cardiffnlp/twitter-roberta-base-sentiment-latest"
     _registry_models = (
-        "distilroberta-base",
         "cardiffnlp/twitter-roberta-base-sentiment-latest",
+        "distilbert-base-uncased-finetuned-sst-2-english",
         "nlptown/bert-base-multilingual-uncased-sentiment",
     )
 
@@ -83,11 +84,17 @@ class HuggingFaceAdapter(BaseSentimentAdapter):
                 "Or via project dependencies: uv sync"
             ) from exc
 
+        torch_any = cast(Any, torch)
+
         # Auto-detect device if not specified
         if self._device is None:
-            if torch.cuda.is_available():
+            if getattr(torch_any, "cuda", None) and torch_any.cuda.is_available():
                 self._device = "cuda"
-            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            elif (
+                getattr(torch_any, "backends", None)
+                and getattr(torch_any.backends, "mps", None)
+                and torch_any.backends.mps.is_available()
+            ):
                 self._device = "mps"
             else:
                 self._device = "cpu"
@@ -100,11 +107,27 @@ class HuggingFaceAdapter(BaseSentimentAdapter):
             meta={"model": self._model, "device": self._device},
         )
 
+        device_arg: Any
+        if isinstance(self._device, str):
+            if self._device in {"", "auto"}:
+                device_arg = None
+            elif self._device == "cpu":
+                device_arg = -1
+            elif self._device.startswith("cuda") or self._device == "mps":
+                try:
+                    device_arg = torch_any.device(self._device)
+                except Exception:
+                    device_arg = 0
+            else:
+                device_arg = self._device
+        else:
+            device_arg = self._device
+
         try:
             self._pipeline = pipeline(
-                "sentiment-analysis",
+                "text-classification",
                 model=self._model,
-                device=self._device,
+                device=device_arg,
                 **self._extra,
             )
             self._log.success(
@@ -145,12 +168,7 @@ class HuggingFaceAdapter(BaseSentimentAdapter):
 
         # Run prediction
         results = self._pipeline(text)
-
-        # Handle different output formats from different models
-        if isinstance(results, list) and len(results) > 0:
-            result = results[0]
-        else:
-            result = results
+        result = self._select_result(results)
 
         # Extract label and score
         label = result.get("label", "unknown")
@@ -191,8 +209,9 @@ class HuggingFaceAdapter(BaseSentimentAdapter):
         # Process results
         processed = []
         for result in results:
-            label = result.get("label", "unknown")
-            raw_score = result.get("score", 0.0)
+            selected = self._select_result(result)
+            label = selected.get("label", "unknown")
+            raw_score = selected.get("score", 0.0)
 
             # Normalize score to [0.0, 1.0]
             score = self._normalize_score(label, raw_score)
@@ -200,12 +219,14 @@ class HuggingFaceAdapter(BaseSentimentAdapter):
             # Calculate confidence
             confidence = raw_score
 
-            processed.append({
-                "score": score,
-                "label": label,
-                "confidence": confidence,
-                "raw": result,
-            })
+            processed.append(
+                {
+                    "score": score,
+                    "label": label,
+                    "confidence": confidence,
+                    "raw": selected,
+                }
+            )
 
         return processed
 
@@ -264,3 +285,16 @@ class HuggingFaceAdapter(BaseSentimentAdapter):
 
         # Fallback: assume raw_score is in [0.0, 1.0]
         return max(0.0, min(1.0, raw_score))
+
+    @staticmethod
+    def _select_result(payload: Any) -> dict[str, Any]:
+        """Normalize pipeline output into a single result dict."""
+        if isinstance(payload, list):
+            if not payload:
+                return {"label": "neutral", "score": 0.5}
+            if all(isinstance(item, dict) for item in payload):
+                return max(payload, key=lambda item: item.get("score", 0.0))
+            return {"label": "neutral", "score": 0.5}
+        if isinstance(payload, dict):
+            return payload
+        return {"label": "neutral", "score": 0.5}

@@ -18,8 +18,8 @@ You use the SentimentAnalyzer module which provides:
 - `analyzer.get_score(text)` - Get score only (0→1)
 
 The SentimentAnalyzer supports multiple models:
-- "distilroberta-base" (default, fast, lightweight)
-- "cardiffnlp/twitter-roberta-base-sentiment-latest" (Twitter-optimized)
+- "cardiffnlp/twitter-roberta-base-sentiment-latest" (default, Twitter-optimized)
+- "distilbert-base-uncased-finetuned-sst-2-english" (fast, lightweight)
 - "nlptown/bert-base-multilingual-uncased-sentiment" (multilingual)
 
 You process documents in batches for efficiency and handle errors gracefully.

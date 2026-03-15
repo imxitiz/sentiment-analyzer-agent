@@ -10,6 +10,7 @@ This folder tracks the implemented and planned behavior of each pipeline agent.
 - [2_3_scraper.md](./2_3_scraper.md): deep extraction, platform-aware backend routing, ScraperRecoveryAgent sub-agent, MongoDB document schema, dual persistence.
 - [2_4_cleaner.md](./2_4_cleaner.md): adaptive deterministic cleaning, quality gates, dedupe, Mongo persistence, planner-assisted runtime overrides.
 - [2_4_1_cleaner_subagents.md](./2_4_1_cleaner_subagents.md): CleanerPlannerAgent and CleanerRecoveryAgent responsibilities, IO contracts, coordination model.
+- [2_5_sentiment.md](./2_5_sentiment.md): sentiment scoring, batch processing, recovery fallback, Mongo persistence, run telemetry.
 
 ## Documentation rule
 
