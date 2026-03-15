@@ -366,7 +366,7 @@ class MyAdapter(BaseLLMAdapter):
         self._llm = SomeLangChainChatModel(model=self._model, ...)
 ```
 
-**Providers**: `google` (aliases: gemini, genai) · `ollama` · `openai` (aliases: chatgpt, gpt) · `dummy` (testing)
+**Providers**: `google` (aliases: gemini, genai) · `ollama` · `openai` (aliases: chatgpt, gpt) · `copilot` (alias: github) · `dummy` (testing)
 
 ### Logging — Structured Production Logger
 

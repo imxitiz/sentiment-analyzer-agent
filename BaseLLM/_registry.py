@@ -62,18 +62,29 @@ OPENAI_MODELS: tuple[str, ...] = (
 
 OPENAI_DEFAULT: str = "gpt-4o-mini"
 
+# ── GitHub Copilot (langchain-copilot) ──────────────────────────────────
+COPILOT_MODELS: tuple[str, ...] = (
+    "gpt-4o"
+    "gpt-4.1",
+    "gpt-5-mini",
+)
+
+COPILOT_DEFAULT: str = "gpt-4.1"
+
 # ── Provider → models mapping ───────────────────────────────────────────
 
 PROVIDERS: dict[str, tuple[str, ...]] = {
     "google": GEMINI_MODELS,
     "ollama": OLLAMA_MODELS,
     "openai": OPENAI_MODELS,
+    "copilot": COPILOT_MODELS,
 }
 
 PROVIDER_DEFAULTS: dict[str, str] = {
     "google": GEMINI_DEFAULT,
     "ollama": OLLAMA_DEFAULT,
     "openai": OPENAI_DEFAULT,
+    "copilot": COPILOT_DEFAULT,
 }
 
 # Aliases → canonical provider key
@@ -86,6 +97,8 @@ _PROVIDER_ALIASES: dict[str, str] = {
     "openai": "openai",
     "chatgpt": "openai",
     "gpt": "openai",
+    "copilot": "copilot",
+    "github": "copilot",
 }
 
 

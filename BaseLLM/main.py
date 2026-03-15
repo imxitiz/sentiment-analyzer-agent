@@ -30,6 +30,7 @@ Providers
     google (aliases: gemini, genai, google_genai)
     ollama
     openai (aliases: chatgpt, gpt)
+    copilot (aliases: github)
     dummy  – zero-dependency stub for tests
 """
 
@@ -191,6 +192,16 @@ def get_llm(
             **kwargs,
         )
 
+    if canonical == "copilot":
+        from .copilot_adapter import CopilotAdapter
+
+        return CopilotAdapter(
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            **kwargs,
+        )
+
     # Should never reach here thanks to resolve_provider, but just in case…
     raise ValueError(f"No adapter implemented for provider {canonical!r}")
 
@@ -213,6 +224,11 @@ def get_ollama_llm(model: str | None = None, **kwargs: Any) -> BaseLLMAdapter:
 def get_openai_llm(model: str | None = None, **kwargs: Any) -> BaseLLMAdapter:
     """Shortcut: ``get_llm("openai", model=…)``."""
     return get_llm("openai", model=model, **kwargs)
+
+
+def get_copilot_llm(model: str | None = None, **kwargs: Any) -> BaseLLMAdapter:
+    """Shortcut: ``get_llm("copilot", model=…)``."""
+    return get_llm("copilot", model=model, **kwargs)
 
 
 # =====================================================================

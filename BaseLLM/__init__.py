@@ -30,6 +30,7 @@ Available providers
     • ``google``  (aliases: ``gemini``, ``genai``, ``google_genai``)
     • ``ollama``
     • ``openai``  (aliases: ``chatgpt``, ``gpt``)
+    • ``copilot`` (alias: ``github``)
     • ``dummy``   – zero-dependency testing stub
 
 Registry helpers
@@ -48,6 +49,7 @@ from ._registry import (
     GEMINI_MODELS,
     OLLAMA_MODELS,
     OPENAI_MODELS,
+    COPILOT_MODELS,
     PROVIDERS,
     PROVIDER_DEFAULTS,
     models_for,
@@ -62,12 +64,14 @@ from .main import (
     get_gemini_llm,
     get_ollama_llm,
     get_openai_llm,
+    get_copilot_llm,
     DummyAdapter,
 )
 
 # ── Concrete adapters (import when you need explicit typing) ─────────
 from .genai_adapter import GeminiAdapter, GenAIAdapter
 from .ollama_adapter import OllamaAdapter
+from .copilot_adapter import CopilotAdapter
 from .openai_adapter import OpenAIAdapter
 
 __all__ = [
@@ -79,6 +83,7 @@ __all__ = [
     "get_gemini_llm",
     "get_ollama_llm",
     "get_openai_llm",
+    "get_copilot_llm",
     # Dummy
     "DummyAdapter",
     # Concrete adapters
@@ -86,10 +91,12 @@ __all__ = [
     "GenAIAdapter",
     "OllamaAdapter",
     "OpenAIAdapter",
+    "CopilotAdapter",
     # Registry
     "GEMINI_MODELS",
     "OLLAMA_MODELS",
     "OPENAI_MODELS",
+    "COPILOT_MODELS",
     "PROVIDERS",
     "PROVIDER_DEFAULTS",
     "models_for",

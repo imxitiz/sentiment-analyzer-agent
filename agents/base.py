@@ -288,8 +288,29 @@ class BaseAgent(ABC):
         prompt: str,
     ) -> CompiledStateGraph:
         """Build a LangGraph agent with tools."""
+        chat_model = self._llm_adapter.chat_model
+
+        # Some LLM implementations (e.g. langchain-copilot) provide their own
+        # tool binding mechanism. Use it if available so the model can drive
+        # tool invocation natively.
+        if hasattr(chat_model, "bind_tools") and callable(
+            getattr(chat_model, "bind_tools")
+        ):
+            try:
+                chat_model = chat_model.bind_tools(tools)
+                tools = []
+            except Exception as exc:
+                self._log.warning(
+                    "Tool binding failed (falling back to LangChain tool loop): %s",
+                    exc,
+                    action="bind_tools_failed",
+                )
+
+        # LangChain's type signatures expect a BaseChatModel or model name string.
+        # Copilot's bind_tools returns a Runnable, which is compatible at runtime
+        # but triggers type checkers. Cast to Any to keep typing clean.
         return create_agent(
-            self._llm_adapter.chat_model,
+            chat_model,  # type: ignore[arg-type]
             tools=tools,
             system_prompt=prompt,
             name=self._name,
