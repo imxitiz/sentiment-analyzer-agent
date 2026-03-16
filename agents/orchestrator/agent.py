@@ -138,6 +138,11 @@ class OrchestratorAgent(BaseAgent):
     def invoke(self, message: str, **kwargs: Any) -> dict[str, Any]:
         """Bootstrap topic DB + orchestrator DB before running pipeline."""
         topic = message.strip()
+
+        # Ensure status is recorded even if bootstrap fails quickly.
+        self._checkpoint_topic_input(topic)
+        self._checkpoint_agent_status(topic, status="working", mark_started=True)
+
         run = bootstrap_topic(topic)
         run_id = run["run_id"]
         update_topic_run(
@@ -163,6 +168,12 @@ class OrchestratorAgent(BaseAgent):
             )
             return result
         except Exception as exc:
+            self._checkpoint_agent_status(
+                topic,
+                status="failed",
+                last_error=str(exc),
+                mark_completed=True,
+            )
             update_topic_run(
                 run_id,
                 status="failed",

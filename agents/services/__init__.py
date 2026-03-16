@@ -2,7 +2,7 @@
 
 Shared services for resilience checkpoints and reusable persistence logic.
 """
-
+from .llm_tracer import get_llm_trace_context, llm_trace_context, save_llm_trace
 from .planner_checkpoint import (
     db_path_for_topic,
     increment_agent_retry,
@@ -68,6 +68,7 @@ from .orchestrator_checkpoint import (
     topic_db_for,
     update_topic_run,
 )
+from .search_searchengine import search_searchengine
 
 __all__ = [
     "bootstrap_topic",
@@ -85,6 +86,7 @@ __all__ = [
     "classify_target_platform",
     "create_topic_run",
     "db_path_for_topic",
+    "get_llm_trace_context",
     "expand_with_crawlbase",
     "finish_harvest_run",
     "finish_scrape_run",
@@ -94,6 +96,7 @@ __all__ = [
     "init_orchestrator_db",
     "init_scraper_tables",
     "init_topic_db",
+    "llm_trace_context",
     "load_research_brief",
     "load_latest_clean_stats",
     "load_latest_scrape_stats",
@@ -104,8 +107,10 @@ __all__ = [
     "resolve_enabled_scrape_backends",
     "available_scrape_backends",
     "save_pipeline_artifact",
+    "save_llm_trace",
     "save_planner_plan",
     "save_topic_input",
+    "search_searchengine",
     "bootstrap_scrape_targets",
     "scrape_status_counts",
     "scrape_target_with_backend",

@@ -1,0 +1,144 @@
+$ LOG_LEVEL=ERROR uv run python ForTesting/agents/planner_via_orchestrator_cli.py --topic "RSP winning on Nepal's HoR National election 2082/2026" --provider copilot --model gpt-4o --show-output
+======================================================================
+Planner-only orchestration run complete
+======================================================================
+Topic: RSP winning on Nepal's HoR National election 2082/2026
+Provider: copilot
+Model: gpt-4o
+Topic DB: data/scrapes/rsp-winning-on-nepals-hor-national-election-20822026.db
+
+Orchestrator run:
+  run_id: b43e0a48-6b21-40f2-83a8-7ff496c045b5
+  status: completed
+  active_agent: orchestrator
+  created_at: 2026-03-18T22:09:30.348606+00:00
+  updated_at: 2026-03-18T22:10:16.525719+00:00
+  topic_db_path: data/scrapes/rsp-winning-on-nepals-hor-national-election-20822026.db
+
+Artifact counts in topic DB for this run:
+  planner_estimated_volume: 1
+  planner_hashtag: 15
+  planner_keyword: 20
+  planner_output: 1
+  planner_platform: 6
+  planner_query: 20
+  planner_raw_output: 1
+  planner_reasoning: 1
+  planner_stop_condition: 1
+  planner_structured_skipped: 1
+  planner_topic_summary: 1
+  planner_web_context: 1
+  topic_received: 1
+
+Orchestrator output:
+----------------------------------------------------------------------
+Planner generated structured output successfully.
+
+{
+  "topic_summary": "Sentiment on Rastriya Swatantra Party (RSP) winning Nepal's HoR National election 2082/2026",
+  "keywords": [
+    "Rastriya Swatantra Party",
+    "RSP Nepal",
+    "RSP election win",
+    "Nepal HoR election 2082",
+    "Nepal election 2026",
+    "House of Representatives Nepal",
+    "RSP victory",
+    "Nepal politics",
+    "RSP supporters",
+    "RSP critics",
+    "RSP coalition",
+    "RSP government",
+    "RSP manifesto",
+    "RSP performance",
+    "Nepal election results",
+    "Nepal political change",
+    "RSP public opinion",
+    "RSP youth vote",
+    "RSP centrist party",
+    "RSP impact"
+  ],
+  "hashtags": [
+    "#RSP",
+    "#RastriyaSwatantraParty",
+    "#NepalElection2026",
+    "#HoR2082",
+    "#NepalPolitics",
+    "#ElectionResults",
+    "#PoliticalChange",
+    "#RSPVictory",
+    "#NepalVotes",
+    "#RSPSupporters",
+    "#RSPCritics",
+    "#NepalYouthVote",
+    "#RSPManifesto",
+    "#RSPCoalition",
+    "#NepalParliament"
+  ],
+  "platforms": [
+    {
+      "name": "Twitter/X",
+      "priority": "high",
+      "reason": "Real-time reactions, trending hashtags, and diverse opinions from both supporters and critics."
+    },
+    {
+      "name": "Facebook",
+      "priority": "high",
+      "reason": "Widespread use in Nepal, active political groups, and longer-form discussions."
+    },
+    {
+      "name": "YouTube",
+      "priority": "medium",
+      "reason": "Video comment sections and vlogs provide in-depth sentiment and analysis."
+    },
+    {
+      "name": "Reddit",
+      "priority": "medium",
+      "reason": "Active South Asian and Nepali communities, detailed discussions, and Q&A threads."
+    },
+    {
+      "name": "News sites",
+      "priority": "high",
+      "reason": "Official reports, editorials, and public comment sections reflect broader sentiment."
+    },
+    {
+      "name": "Nepali forums/blogs",
+      "priority": "medium",
+      "reason": "Local perspectives, grassroots opinions, and community-driven sentiment."
+    }
+  ],
+  "search_queries": [
+    "Rastriya Swatantra Party win Nepal HoR 2082",
+    "RSP Nepal election 2026 reactions",
+    "Nepal House of Representatives election 2082 RSP victory",
+    "RSP supporters opinion 2026",
+    "RSP critics response Nepal election",
+    "Nepal election results 2026 RSP",
+    "RSP coalition government Nepal 2082",
+    "site:reddit.com RSP Nepal election 2026",
+    "site:reddit.com r/Nepal RSP win",
+    "site:twitter.com RSP Nepal election",
+    "site:twitter.com #RSPVictory",
+    "site:facebook.com Rastriya Swatantra Party election win",
+    "site:facebook.com Nepal election 2026 discussion",
+    "site:youtube.com RSP Nepal election analysis",
+    "site:youtube.com Nepal HoR 2082 results",
+    "site:ekantipur.com RSP election 2082",
+    "site:thehimalayantimes.com RSP win 2026",
+    "site:myrepublica.nagariknetwork.com RSP Nepal",
+    "Nepal political change RSP 2026",
+    "RSP manifesto impact Nepal election"
+  ],
+  "estimated_volume": "Expect 2,000-5,000 relevant posts/articles across all platforms within 2 weeks of the election. For robust sentiment analysis, a sample of at least 500-1,000 unique, relevant posts is recommended.",
+  "stop_condition": "Stop after collecting 1,000 relevant posts or when 3 consecutive search iterations yield less than 10% new results across all major platforms.",
+  "reasoning": "The plan targets both mainstream and community-driven platforms to capture a wide range of opinions, including supporters, critics, and neutral observers. Keywords and hashtags reflect both English and Nepali usage patterns. Platform selection prioritizes those with high political engagement in Nepal. The stop condition ensures data diversity and avoids redundancy, while the estimated sample size supports statistically meaningful sentiment analysis."
+}
+----------------------------------------------------------------------
+
+Planner artifact validation:
+  planner_keyword > 0: True
+  planner_query > 0: True
+  planner_hashtag > 0: True
+  planner_platform > 0: True
+Result: PASS
+[ble: elapsed 50.935s (CPU 20.0%)] LOG_LEVEL=ERROR uv run python ForTesting/agents/planner_via_orchestrator_cli.py --topic "RSP winning on Nepal's HoR National election 2082/2026" --provider copilot --model gpt-4o --show-output

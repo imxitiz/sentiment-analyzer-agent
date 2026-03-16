@@ -86,7 +86,7 @@ def agent_tool(*, category: str = "general"):
     automatically added to the tool registry.
     """
 
-    def decorator(func):  # noqa: ANN001
+    def decorator(func):
         from langchain_core.tools import tool as lc_tool
 
         wrapped = lc_tool(func)

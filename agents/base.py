@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import time
 import inspect
+from contextvars import copy_context
 from abc import ABC
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from pathlib import Path
@@ -354,28 +355,42 @@ class BaseAgent(ABC):
         self._checkpoint_topic_input(message)
         self._checkpoint_agent_status(message, status="working", mark_started=True)
 
-        if self._demo:
-            result = self._demo_invoke(message, **kwargs)
-            self._checkpoint_artifact(
-                topic=message,
-                artifact_type="agent_output",
-                value=result.get("output", ""),
-                meta={"mode": "demo", "call": "invoke"},
-            )
-            self._checkpoint_agent_status(
-                message,
-                status="completed",
-                retries=0,
-                mark_completed=True,
-            )
-            return result
+        try:
+            from agents.services import llm_trace_context
+        except Exception:
+            llm_trace_context = None
 
-        return self._invoke_with_resilience(
-            call_name="invoke",
-            message=message,
-            core_call=self._invoke_core,
-            **kwargs,
+        from contextlib import nullcontext
+
+        context_manager = (
+            llm_trace_context(message, self._name)
+            if llm_trace_context is not None
+            else nullcontext()
         )
+
+        with context_manager:
+            if self._demo:
+                result = self._demo_invoke(message, **kwargs)
+                self._checkpoint_artifact(
+                    topic=message,
+                    artifact_type="agent_output",
+                    value=result.get("output", ""),
+                    meta={"mode": "demo", "call": "invoke"},
+                )
+                self._checkpoint_agent_status(
+                    message,
+                    status="completed",
+                    retries=0,
+                    mark_completed=True,
+                )
+                return result
+
+            return self._invoke_with_resilience(
+                call_name="invoke",
+                message=message,
+                core_call=self._invoke_core,
+                **kwargs,
+            )
 
     async def ainvoke(self, message: str, **kwargs: Any) -> dict[str, Any]:
         """Run the agent asynchronously."""
@@ -388,28 +403,42 @@ class BaseAgent(ABC):
         self._checkpoint_topic_input(message)
         self._checkpoint_agent_status(message, status="working", mark_started=True)
 
-        if self._demo:
-            result = self._demo_invoke(message, **kwargs)
-            self._checkpoint_artifact(
-                topic=message,
-                artifact_type="agent_output",
-                value=result.get("output", ""),
-                meta={"mode": "demo", "call": "ainvoke"},
-            )
-            self._checkpoint_agent_status(
-                message,
-                status="completed",
-                retries=0,
-                mark_completed=True,
-            )
-            return result
+        try:
+            from agents.services import llm_trace_context
+        except Exception:
+            llm_trace_context = None
 
-        return await self._ainvoke_with_resilience(
-            call_name="ainvoke",
-            message=message,
-            core_call=self._ainvoke_core,
-            **kwargs,
+        from contextlib import nullcontext
+
+        context_manager = (
+            llm_trace_context(message, self._name)
+            if llm_trace_context is not None
+            else nullcontext()
         )
+
+        with context_manager:
+            if self._demo:
+                result = self._demo_invoke(message, **kwargs)
+                self._checkpoint_artifact(
+                    topic=message,
+                    artifact_type="agent_output",
+                    value=result.get("output", ""),
+                    meta={"mode": "demo", "call": "ainvoke"},
+                )
+                self._checkpoint_agent_status(
+                    message,
+                    status="completed",
+                    retries=0,
+                    mark_completed=True,
+                )
+                return result
+
+            return await self._ainvoke_with_resilience(
+                call_name="ainvoke",
+                message=message,
+                core_call=self._ainvoke_core,
+                **kwargs,
+            )
 
     def stream(self, message: str, **kwargs: Any) -> Generator:
         """Stream agent execution steps."""
@@ -640,13 +669,15 @@ class BaseAgent(ABC):
         *,
         timeout_seconds: int,
     ) -> dict[str, Any]:
+        ctx = copy_context()
+
         def _run_fn_with_event_loop() -> dict[str, Any]:
             # Some chat model adapters rely on asyncio.get_event_loop() even in
             # sync paths. ThreadPool workers do not have a loop by default.
             loop = asyncio.new_event_loop()
             try:
                 asyncio.set_event_loop(loop)
-                return fn()
+                return ctx.run(fn)
             finally:
                 asyncio.set_event_loop(None)
                 loop.close()
@@ -870,7 +901,10 @@ class BaseAgent(ABC):
             SystemMessage(content=self._system_prompt),
             HumanMessage(content=message),
         ]
-        response = self._llm_adapter.chat_model.invoke(messages)
+        response = self._llm_adapter.invoke_messages(
+            messages,
+            call_kind="chat_invoke_direct",
+        )
         output = response.content if hasattr(response, "content") else str(response)
         self._log.success(
             "direct OK",

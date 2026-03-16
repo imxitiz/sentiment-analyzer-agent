@@ -31,29 +31,27 @@ Usage::
 from __future__ import annotations
 
 import re
+from contextlib import nullcontext
 from typing import Any
 
-from langchain.agents import create_agent
+from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from langchain_core.messages import HumanMessage, SystemMessage
-
-from agents.base import BaseAgent
 from agents._registry import register_agent
+from agents.base import BaseAgent
 from agents.services import (
     init_topic_db,
     save_pipeline_artifact,
     save_planner_plan,
     save_topic_input,
 )
-from agents.tools.search import search_engine_snippets
+
+from agents.services import search_searchengine
+
 from Logging import get_logger
 from utils.structured_output import invoke_model_with_structured_recovery
 
 logger = get_logger("agents.planner")
-
-
-# ── Structured output schema ─────────────────────────────────────────
 
 
 class PlatformStrategy(BaseModel):
@@ -65,48 +63,25 @@ class PlatformStrategy(BaseModel):
 
 
 class ResearchPlan(BaseModel):
-    """Structured output from the planner agent."""
+    """Structured research plan output from the planner."""
 
-    topic_summary: str = Field(
-        description="One-line summary of the research topic",
-    )
-    keywords: list[str] = Field(
-        description="Search keywords to find relevant content (10-20)",
-    )
-    hashtags: list[str] = Field(
-        description="Social media hashtags for this topic (10-15)",
-    )
-    platforms: list[PlatformStrategy] = Field(
-        description="Platforms to search with priority and reasoning",
-    )
-    search_queries: list[str] = Field(
-        description="Ready-to-use search queries (5-10)",
-    )
-    estimated_volume: str = Field(
-        description="Expected data volume and recommended sample size",
-    )
-    stop_condition: str = Field(
-        description="When to stop collecting data",
-    )
-    reasoning: str = Field(
-        description="Brief explanation of the overall strategy",
-    )
-
-
-# ── Agent ─────────────────────────────────────────────────────────────
+    topic_summary: str
+    keywords: list[str]
+    hashtags: list[str]
+    platforms: list[PlatformStrategy]
+    search_queries: list[str]
+    estimated_volume: str
+    stop_condition: str
+    reasoning: str
 
 
 @register_agent
 class PlannerAgent(BaseAgent):
-    """Research planner — generates keywords, hashtags, and search strategy.
-
-    Runs in direct mode (no tools).  Uses structured output when the LLM
-    supports it, falls back to plain text otherwise.
-    """
+    """Create a research plan for a user topic."""
 
     _name = "planner"
     _description = (
-        "Generate a comprehensive research plan for sentiment analysis on "
+        "Generate a comprehensive structured research plan for sentiment analysis on "
         "a given topic.  Returns keywords, hashtags, platform strategies, "
         "and ready-to-use search queries as structured JSON."
     )
@@ -117,152 +92,232 @@ class PlannerAgent(BaseAgent):
     def invoke(self, message: str, **kwargs: Any) -> dict[str, Any]:
         """Generate a research plan for the given topic.
 
-        Attempts structured output first; falls back to plain text if the
-        LLM doesn't support ``with_structured_output``.  In demo mode,
-        returns a static plan immediately.
-
+        Attempts structured output parsing to return a ResearchPlan model, but always returns the raw LLM output as a JSON string for transparency and debugging.
+        In demo mode, returns a static ResearchPlan with the topic name injected immediately.
         Returns:
-            Dict with ``output`` (JSON string), ``messages``, and
-            optionally ``plan`` (``ResearchPlan`` instance).
+            dict with keys:
+                - 'plan': ResearchPlan (when structured output is successful)
+                - 'output': raw JSON string from LLM (always available)
+            saves artifacts and checkpoints status in the database.
         """
-        self._log.info(
-            "Planning for topic  len=%d",
-            len(message),
-            action="plan",
-            meta={"topic_preview": message[:100]},
-        )
         topic = message.strip()
+        if not topic:
+            raise ValueError("Topic cannot be empty")
+
         init_topic_db(topic)
         save_topic_input(
             topic,
             topic,
             input_type="topic",
-            source_agent="planner",
-        )
-
-        if self._demo:
-            result = self._demo_invoke(message, **kwargs)
-            plan = result.get("plan")
-            if plan is not None:
-                save_planner_plan(
-                    topic,
-                    plan=plan,
-                    raw_output=result.get("output", ""),
-                    source_agent=self._name,
-                )
-            else:
-                save_pipeline_artifact(
-                    topic,
-                    source_agent=self._name,
-                    artifact_type="planner_demo_output",
-                    value=result.get("output", ""),
-                )
-            return result
-
-        web_context = self._gather_web_context(topic)
-        if web_context:
-            save_pipeline_artifact(
-                topic,
-                source_agent=self._name,
-                artifact_type="planner_web_context",
-                value=web_context,
-            )
-
-        messages = [
-            SystemMessage(content=self._system_prompt),
-            HumanMessage(
-                content=(
-                    f"Create a research plan for: {message}\n\n"
-                    f"Web context (from tool-based search):\n{web_context}"
-                )
-            ),
-        ]
-
-        fallback_result: dict[str, Any] = {"messages": messages, "output": ""}
-
-        def _fallback_text_getter() -> str:
-            nonlocal fallback_result
-            fallback_result = self._invoke_direct(message, **kwargs)
-            self._log.success("Plan generated (text fallback)", action="plan")
-            return str(fallback_result.get("output", ""))
-
-        recovery = invoke_model_with_structured_recovery(
-            llm_adapter=self._llm_adapter,
-            schema_model=ResearchPlan,
-            messages=messages,
-            supports_structured=self._llm_adapter.supports_structured_output,
-            fallback_text_getter=_fallback_text_getter,
-            normalize_payload=self._normalize_plan_payload,
-            repair_prompt_builder=lambda raw: self._build_plan_repair_prompt(
-                topic=topic,
-                raw_plan_text=raw,
-            ),
-            repair_max_tokens=2048,
-        )
-
-        if recovery.structured_error is not None:
-            save_pipeline_artifact(
-                topic,
-                source_agent=self._name,
-                artifact_type="planner_structured_error",
-                value=recovery.structured_error,
-                meta={"mode": recovery.mode},
-            )
-        if recovery.parse_error is not None:
-            save_pipeline_artifact(
-                topic,
-                source_agent=self._name,
-                artifact_type="planner_parse_error",
-                value=recovery.parse_error,
-                meta={"mode": recovery.mode},
-            )
-        if recovery.repair_error is not None:
-            save_pipeline_artifact(
-                topic,
-                source_agent=self._name,
-                artifact_type="planner_repair_error",
-                value=recovery.repair_error,
-                meta={"mode": recovery.mode},
-            )
-
-        if recovery.value is not None:
-            plan = recovery.value
-            self._log.success(
-                "Plan generated (%s)  keywords=%d  queries=%d",
-                recovery.mode,
-                len(plan.keywords),
-                len(plan.search_queries),
-                action="plan",
-                meta={
-                    "mode": recovery.mode,
-                    "keyword_count": len(plan.keywords),
-                    "hashtag_count": len(plan.hashtags),
-                    "platform_count": len(plan.platforms),
-                    "query_count": len(plan.search_queries),
-                },
-            )
-            save_planner_plan(
-                topic,
-                plan=plan,
-                raw_output=recovery.raw_text,
-                source_agent=self._name,
-            )
-            return {
-                "messages": fallback_result.get("messages", messages),
-                "output": recovery.output_text,
-                "plan": plan,
-            }
-
-        save_pipeline_artifact(
-            topic,
             source_agent=self._name,
-            artifact_type="planner_text_output",
-            value=recovery.raw_text,
         )
-        return {
-            "messages": fallback_result.get("messages", messages),
-            "output": recovery.output_text,
-        }
+
+        self._checkpoint_topic_input(topic)
+        self._checkpoint_agent_status(topic, status="working", mark_started=True)
+
+        self._log.info(
+            "Planning for topic  len=%d",
+            len(topic),
+            action="plan",
+            meta={"topic_preview": topic[:120]},
+        )
+
+        try:
+            from agents.services import llm_trace_context
+
+            trace_context = llm_trace_context(topic, self._name)
+        except Exception:
+            trace_context = nullcontext()
+
+        try:
+            with trace_context:
+                if self._demo:
+                    result = self._demo_invoke(message, **kwargs)
+                    if result.get("plan") is not None:
+                        save_planner_plan(
+                            topic,
+                            plan=result["plan"],
+                            raw_output=result.get("output", ""),
+                            source_agent=self._name,
+                        )
+                    else:
+                        save_pipeline_artifact(
+                            topic,
+                            source_agent=self._name,
+                            artifact_type="planner_demo_output",
+                            value=result.get("output", ""),
+                        )
+                    self._checkpoint_agent_status(
+                        topic,
+                        status="completed",
+                        retries=0,
+                        mark_completed=True,
+                    )
+                    return result
+
+                web_context = self._gather_web_context(topic)
+                if web_context:
+                    save_pipeline_artifact(
+                        topic,
+                        source_agent=self._name,
+                        artifact_type="planner_web_context",
+                        value=web_context,
+                    )
+
+                messages = [
+                    SystemMessage(content=self._system_prompt),
+                    HumanMessage(
+                        content=(
+                            f"Create a research plan for: {message}\n\n"
+                            f"Web context (from tool-based internet search):\n{web_context}"
+                        )
+                    ),
+                ]
+
+                fallback_result: dict[str, Any] = {"messages": messages, "output": ""}
+
+                def _fallback_text_getter() -> str:
+                    nonlocal fallback_result
+                    response = self._llm_adapter.invoke_messages(
+                        messages,
+                        call_kind="planner_fallback_invoke",
+                    )
+                    content = (
+                        response.content if hasattr(response, "content") else response
+                    )
+                    if isinstance(content, list):
+                        output = "\n".join(str(item) for item in content)
+                    else:
+                        output = str(content)
+                    fallback_result = {"messages": messages, "output": output}
+                    self._log.success("Plan generated (text fallback)", action="plan")
+                    return str(fallback_result.get("output", ""))
+
+                recovery = invoke_model_with_structured_recovery(
+                    llm_adapter=self._llm_adapter,
+                    schema_model=ResearchPlan,
+                    messages=messages,
+                    supports_structured=self._llm_adapter.supports_structured_output,
+                    fallback_text_getter=_fallback_text_getter,
+                    normalize_payload=self._normalize_plan_payload,
+                    repair_prompt_builder=lambda raw: self._build_plan_repair_prompt(
+                        topic=topic,
+                        raw_plan_text=raw,
+                    ),
+                    max_reasks=0
+                    if not self._llm_adapter.supports_structured_output
+                    else 1,
+                    repair_max_tokens=2048,
+                )
+
+                if recovery.structured_error is not None:
+                    save_pipeline_artifact(
+                        topic,
+                        source_agent=self._name,
+                        artifact_type="planner_structured_error",
+                        value=recovery.structured_error,
+                        meta={"mode": recovery.mode},
+                    )
+                if recovery.structured_skipped:
+                    save_pipeline_artifact(
+                        topic,
+                        source_agent=self._name,
+                        artifact_type="planner_structured_skipped",
+                        value="Structured output intentionally skipped for provider",
+                        meta={
+                            "provider": self._llm_adapter.provider,
+                            "mode": recovery.mode,
+                        },
+                    )
+                if recovery.parse_error is not None:
+                    save_pipeline_artifact(
+                        topic,
+                        source_agent=self._name,
+                        artifact_type="planner_parse_error",
+                        value=recovery.parse_error,
+                        meta={"mode": recovery.mode},
+                    )
+                if recovery.repair_error is not None:
+                    save_pipeline_artifact(
+                        topic,
+                        source_agent=self._name,
+                        artifact_type="planner_repair_error",
+                        value=recovery.repair_error,
+                        meta={"mode": recovery.mode},
+                    )
+                if recovery.reask_error is not None:
+                    save_pipeline_artifact(
+                        topic,
+                        source_agent=self._name,
+                        artifact_type="planner_reask_error",
+                        value=recovery.reask_error,
+                        meta={
+                            "mode": recovery.mode,
+                            "attempts": recovery.reask_attempts,
+                        },
+                    )
+                if recovery.fallback_error is not None:
+                    save_pipeline_artifact(
+                        topic,
+                        source_agent=self._name,
+                        artifact_type="planner_fallback_error",
+                        value=recovery.fallback_error,
+                        meta={"mode": recovery.mode},
+                    )
+
+                if recovery.value is not None:
+                    plan = recovery.value
+                    self._log.success(
+                        "Plan generated (%s)  keywords=%d  queries=%d",
+                        recovery.mode,
+                        len(plan.keywords),
+                        len(plan.search_queries),
+                    )
+                    save_planner_plan(
+                        topic,
+                        plan=plan,
+                        raw_output=recovery.raw_text,
+                        source_agent=self._name,
+                    )
+                else:
+                    plan = None
+
+                output = recovery.raw_text or fallback_result.get("output", "")
+                if output:
+                    self._checkpoint_artifact(
+                        topic=topic,
+                        artifact_type="planner_output",
+                        value=output,
+                    )
+
+                self._checkpoint_agent_status(
+                    topic,
+                    status="completed",
+                    retries=0,
+                    mark_completed=True,
+                )
+                return {"messages": messages, "output": output, "plan": plan}
+
+        except Exception as exc:
+            self._checkpoint_agent_status(
+                topic,
+                status="failed",
+                last_error=str(exc),
+                mark_completed=True,
+            )
+            raise
+
+    @staticmethod
+    def _flatten_string_values(value: Any) -> list[str]:
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        if isinstance(value, dict):
+            flattened: list[str] = []
+            for item in value.values():
+                flattened.extend(PlannerAgent._flatten_string_values(item))
+            return flattened
+        text = str(value).strip()
+        return [text] if text else []
 
     def _normalize_plan_payload(self, payload: Any) -> Any:
         """Normalize alternate planner JSON shapes to the ResearchPlan schema."""
@@ -272,6 +327,29 @@ class PlannerAgent(BaseAgent):
         normalized = dict(payload)
         if "topic_summary" not in normalized and "topic" in normalized:
             normalized["topic_summary"] = str(normalized.get("topic", "")).strip()
+
+        if isinstance(normalized.get("keywords"), dict):
+            normalized["keywords"] = PlannerAgent._flatten_string_values(
+                normalized.get("keywords")
+            )
+
+        if isinstance(normalized.get("hashtags"), dict):
+            normalized["hashtags"] = PlannerAgent._flatten_string_values(
+                normalized.get("hashtags")
+            )
+
+        if "search_queries" not in normalized:
+            for candidate_key in ("queries", "search_query", "query_list"):
+                if candidate_key in normalized:
+                    normalized["search_queries"] = self._flatten_string_values(
+                        normalized.get(candidate_key)
+                    )
+                    break
+
+        if isinstance(normalized.get("search_queries"), dict):
+            normalized["search_queries"] = self._flatten_string_values(
+                normalized.get("search_queries")
+            )
 
         if "platforms" not in normalized and isinstance(
             normalized.get("platform_strategies"), dict
@@ -295,6 +373,99 @@ class PlannerAgent(BaseAgent):
                     }
                 )
             normalized["platforms"] = platform_items
+
+        if "platforms" not in normalized and isinstance(
+            normalized.get("platform_strategy"), dict
+        ):
+            platform_items = []
+            entries = list(normalized["platform_strategy"].items())
+            for idx, (name, details) in enumerate(entries):
+                detail_dict = details if isinstance(details, dict) else {}
+                approach = str(
+                    detail_dict.get("reason")
+                    or detail_dict.get("rationale")
+                    or detail_dict.get("approach")
+                    or ""
+                ).strip()
+                priority_raw = detail_dict.get("priority")
+                if isinstance(priority_raw, (int, float)):
+                    priority_num = int(priority_raw)
+                    if priority_num <= 2:
+                        priority = "high"
+                    elif priority_num <= 4:
+                        priority = "medium"
+                    else:
+                        priority = "low"
+                else:
+                    priority_text = str(priority_raw or "").strip().lower()
+                    if priority_text in {"high", "medium", "low"}:
+                        priority = priority_text
+                    elif idx <= 1:
+                        priority = "high"
+                    elif idx <= 3:
+                        priority = "medium"
+                    else:
+                        priority = "low"
+
+                platform_items.append(
+                    {
+                        "name": str(name),
+                        "priority": priority,
+                        "reason": approach or f"Sentiment source: {name}",
+                    }
+                )
+            normalized["platforms"] = platform_items
+
+        if isinstance(normalized.get("platforms"), list):
+            normalized_platforms = []
+            for idx, platform in enumerate(normalized["platforms"]):
+                if isinstance(platform, dict):
+                    name = str(
+                        platform.get("name") or platform.get("platform") or "unknown"
+                    )
+                    priority_raw = platform.get("priority")
+                    if isinstance(priority_raw, (int, float)):
+                        priority_num = int(priority_raw)
+                        if priority_num <= 2:
+                            priority = "high"
+                        elif priority_num <= 4:
+                            priority = "medium"
+                        else:
+                            priority = "low"
+                    else:
+                        priority_text = str(priority_raw or "").strip().lower()
+                        if priority_text in {"high", "medium", "low"}:
+                            priority = priority_text
+                        elif idx <= 1:
+                            priority = "high"
+                        elif idx <= 3:
+                            priority = "medium"
+                        else:
+                            priority = "low"
+                    reason = str(
+                        platform.get("reason")
+                        or platform.get("rationale")
+                        or f"Sentiment source: {name}"
+                    )
+                    normalized_platforms.append(
+                        {"name": name, "priority": priority, "reason": reason}
+                    )
+                else:
+                    name = str(platform)
+                    if idx <= 1:
+                        priority = "high"
+                    elif idx <= 3:
+                        priority = "medium"
+                    else:
+                        priority = "low"
+                    normalized_platforms.append(
+                        {
+                            "name": name,
+                            "priority": priority,
+                            "reason": f"Sentiment source: {name}",
+                        }
+                    )
+            normalized["platforms"] = normalized_platforms
 
         normalized.setdefault("estimated_volume", "Target 2,000-5,000 posts/documents")
         normalized.setdefault(
@@ -322,47 +493,95 @@ class PlannerAgent(BaseAgent):
             f"{raw_plan_text}"
         )
 
-    def _invoke_structured(self, messages: list) -> ResearchPlan:
+    def _invoke_structured(self, messages: list[Any]) -> ResearchPlan:
         """Call LLM with structured output binding."""
-        structured_llm = self._llm_adapter.chat_model.with_structured_output(
-            ResearchPlan,
+        result = self._llm_adapter.invoke_structured(
+            messages,
+            schema_model=ResearchPlan,
+            call_kind="planner_structured_invoke",
         )
-        result = structured_llm.invoke(messages)
         if isinstance(result, ResearchPlan):
             return result
         # Handle dict response from some providers
         return ResearchPlan.model_validate(result)
 
     def _gather_web_context(self, topic: str) -> str:
-        """Use tool-calling loop so planner can fetch search snippets."""
+        """Get a quick search queries to gather search snippets deterministically,
+        then summarize with the LLM to give to planner.
+        LLM gives the search query from the user topic, and we do the search ourselves
+        and give the results back to the LLM to summarize, so that from all the actual internet search,
+        it makes LLM easier to make plan from the web context and
+        know the popular terms to do the harvesting and sentiment analysis on given topic.
+
+        !!! WE MIGHT AGAIN NEED TO GO BACK TO LETTING LLM DO THE SEARCHING WITH TOOL CALL IN THE FUTURE,
+        THE PLANNER AGENT WILL HAVE MORE CONTROL ON HOW TO DO THE SEARCHING AND ALSO CAN KNOW BETTER,
+        WHICH CAN LEAD TO BETTER SEARCH QUERIES AND ALSO BETTER WEB CONTEXT SUMMARY FOR THE PLANNER AGENT TO MAKE THE RESEARCH PLAN.
+        BUT FOR NOW, THIS APPROACH GIVES US MORE CONTROL AND RELIABILITY IN TESTING.!!!
+        """
         try:
-            research_agent = create_agent(
-                self._llm_adapter.chat_model,
-                tools=[search_engine_snippets],
-                system_prompt=(
-                    "You are a research assistant for a planning agent. "
-                    "Use the search_engine_snippets tool at least once (you may set"
-                    ' engine="duckduckgo" if you prefer), then '
-                    "return concise bullet points of trends, vocabulary, "
-                    "and likely hashtags for the topic."
-                    "Call tool multiple times if needed to gather more context, with even different queries/engines.  Focus on breadth of context rather than depth, and keep the output concise."
+            query_prompt = [
+                SystemMessage(
+                    content=(
+                        "You are a helpful assistant for a research planner agent. "
+                        "Given a research topic, generate a set of plain text, comma-separated search queries "
+                        "that would be useful to gather web context for that topic. "
+                        "These queries should be designed to retrieve relevant information from search engines or other web sources that can help the planner agent create a comprehensive research plan. "
+                        "The queries should be specific enough to yield useful results but broad enough to cover various aspects of the topic."
+                    )
                 ),
-                name="planner_research",
+                HumanMessage(content=topic),
+            ]
+
+            queries = self._llm_adapter.invoke_messages(
+                query_prompt,
+                call_kind="planner_web_context_queries",
             )
-            result = research_agent.invoke(
-                {
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": (
-                                f"Topic: {topic}. Gather quick web context using the tool. "
-                                "Return compact bullets with no markdown tables."
-                            ),
-                        }
-                    ]
-                }
+
+            content = queries.content if hasattr(queries, "content") else queries
+            if isinstance(content, list):
+                return "\n".join(str(item) for item in content)
+
+            queries = str(content)
+
+            list_of_queries: list[str] = []
+            if isinstance(queries, str):
+                list_of_queries = [
+                    q.strip() for q in re.split(r"[,;\s]+", queries) if q.strip()
+                ]
+            else:
+                list_of_queries = self._flatten_string_values(queries)
+            queries = list_of_queries[:5]  # limit to top 5 queries
+
+            snippet_payloads: list[str] = []
+            for query in queries:
+                snippet_payloads.append(
+                    search_searchengine(query=query, engine="google", max_results=5)
+                )
+
+            summary_messages = [
+                SystemMessage(
+                    content=(
+                        "You are a research assistant for a planning agent. "
+                        "Summarize search snippets into concise bullets about trends, "
+                        "vocabulary, and likely hashtags for sentiment analysis. "
+                        "Keep output short and plain text."
+                    )
+                ),
+                HumanMessage(
+                    content=(
+                        f"Topic: {topic}\n\n"
+                        "Search snippets (JSON):\n" + "\n\n".join(snippet_payloads)
+                    )
+                ),
+            ]
+            response = self._llm_adapter.invoke_messages(
+                summary_messages,
+                call_kind="planner_web_context_summary",
             )
-            return self._extract_last_message(result)
+            content = response.content if hasattr(response, "content") else response
+            if isinstance(content, list):
+                return "\n".join(str(item) for item in content)
+            return str(content)
         except Exception as exc:
             self._log.warning(
                 "Web context gathering failed: %s",

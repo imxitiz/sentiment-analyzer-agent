@@ -66,7 +66,10 @@ class SentimentRecoveryAgent(BaseAgent):
         ]
 
         def _fallback_text_getter() -> str:
-            response = self._llm_adapter.chat_model.invoke(messages)
+            response = self._llm_adapter.invoke_messages(
+                messages,
+                call_kind="sentiment_recovery_fallback_invoke",
+            )
             content = response.content if hasattr(response, "content") else response
             if isinstance(content, list):
                 return "\n".join(str(item) for item in content)

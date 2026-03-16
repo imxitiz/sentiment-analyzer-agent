@@ -7,10 +7,8 @@ fresh context before planning.
 from __future__ import annotations
 
 import json
-from typing import Any
-
 from Logging import get_logger
-from utils import search_google_serper
+from agents.services import search_searchengine
 
 from ._registry import agent_tool
 
@@ -39,120 +37,9 @@ def search_engine_snippets(
         identical regardless of engine so that callers do not need conditional
         logic when processing the output.
     """
-    normalized_engine = engine.lower().strip()
 
-    top_n = max(1, min(int(max_results), 10))
-
-    if normalized_engine == "google":
-        data = search_google_serper(query, max_results=top_n)
-        organic = data.get("organic", [])[:top_n]
-
-        items: list[dict[str, Any]] = []
-        for item in organic:
-            items.append(
-                {
-                    "title": item.get("title", ""),
-                    "link": item.get("link", ""),
-                    "snippet": item.get("snippet", ""),
-                }
-            )
-
-        result = {
-            "ok": bool(data.get("ok", False)),
-            "demo": bool(data.get("demo", False)),
-            "engine": "google",
-            "query": query,
-            "count": len(items),
-            "results": items,
-            "relatedSearches": data.get("relatedSearches", []),
-            "peopleAlsoAsk": data.get("peopleAlsoAsk", []),
-            "knowledgeGraph": data.get("knowledgeGraph", {}),
-        }
-        if data.get("error"):
-            result["error"] = data["error"]
-
-        logger.info(
-            "Search snippets fetched  query=%s results=%d demo=%s",
-            query,
-            len(items),
-            bool(data.get("demo", False)),
-            action="tool_search",
-            meta={
-                "engine": "google",
-                "count": len(items),
-                "demo": bool(data.get("demo", False)),
-            },
-        )
-        return json.dumps(result, ensure_ascii=False)
-
-    if normalized_engine in ("duckduckgo", "ddg"):
-        # Attempt to use the community DuckDuckGo integration.  If the
-        # dependency is missing or the request fails we fall back to a tiny
-        # demo payload so that agents can still function offline or during
-        # tests.
-        items: list[dict[str, Any]] = []
-        demo_mode = False
-        err_msg: str | None = None
-        try:
-            from langchain_community.tools import DuckDuckGoSearchRun
-
-            # DuckDuckGoSearchRun returns a comma separated key:value string by
-            # default; we just want a list of the top titles/links/snippets.
-            runner = DuckDuckGoSearchRun(output_format="json")
-            raw = runner.invoke(query)  # this is a JSON string if output_format=json
-            parsed = json.loads(raw) if isinstance(raw, str) else raw
-            # parsed is expected to be a list of dicts
-            for item in parsed[:top_n]:
-                items.append(
-                    {
-                        "title": item.get("title", ""),
-                        "link": item.get("link", ""),
-                        "snippet": item.get("snippet", ""),
-                    }
-                )
-        except Exception as exc:  # pragma: no cover - network/dependency issues
-            logger.warning(
-                "DuckDuckGo search failed: %s",
-                exc,
-                action="tool_search",
-                reason=str(exc),
-                meta={"query": query},
-            )
-            demo_mode = True
-            err_msg = str(exc)
-            # simple demo response so tool output is still valid
-            items = [
-                {
-                    "title": f"{query} (demo)",
-                    "link": f"https://duckduckgo.com/?q={query}",
-                    "snippet": f"Demo search result for {query}.",
-                }
-            ]
-        result = {
-            "ok": not demo_mode,
-            "demo": demo_mode,
-            "engine": "duckduckgo",
-            "query": query,
-            "count": len(items),
-            "results": items,
-        }
-        if err_msg:
-            result["error"] = err_msg
-        logger.info(
-            "Search snippets fetched  query=%s results=%d demo=%s",
-            query,
-            len(items),
-            demo_mode,
-            action="tool_search",
-            meta={"engine": "duckduckgo", "count": len(items), "demo": demo_mode},
-        )
-        return json.dumps(result, ensure_ascii=False)
-
-    # unsupported engine
-    return json.dumps(
-        {
-            "ok": False,
-            "error": f"Unsupported engine: {engine}. Only 'google' and 'duckduckgo' are available.",
-        },
-        ensure_ascii=False,
-    )
+    try:
+        return search_searchengine(query, engine, max_results)
+    except Exception as e:
+        logger.error(f"Error in search_engine_snippets: {e}")
+        return json.dumps({"ok": False, "error": str(e)})

@@ -24,7 +24,6 @@ logger = get_logger("agents.services.planner_checkpoint")
 
 _DB_DIR = Path("data/scrapes")
 
-
 def _slugify(text: str) -> str:
     slug = text.lower().strip()
     slug = re.sub(r"[^\w\s-]", "", slug)
@@ -90,6 +89,37 @@ def init_topic_db(topic: str) -> Path:
             """
             CREATE INDEX IF NOT EXISTS idx_pipeline_artifacts_type
             ON pipeline_artifacts(artifact_type, created_at)
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS llm_traces (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                source_agent TEXT,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                call_kind TEXT NOT NULL,
+                input_messages_json TEXT,
+                input_text TEXT,
+                output_text TEXT,
+                error_text TEXT,
+                latency_ms REAL,
+                meta_json TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_llm_traces_created
+            ON llm_traces(created_at)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_llm_traces_request
+            ON llm_traces(request_id)
             """
         )
     return db_path_for_topic(topic)

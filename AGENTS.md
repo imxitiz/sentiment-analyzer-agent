@@ -179,6 +179,7 @@ Pipeline flow:  Plan → Search → Scrape → Clean → Sentiment → Dashboard
 | `BaseLLM/adapter.py` | `BaseLLMAdapter` ABC — DRY base with sync/async generate |
 | `BaseLLM/_registry.py` | Single source of truth for all model names & provider aliases |
 | `BaseLLM/main.py` | `get_llm()` factory + `DummyAdapter` (zero-dependency) |
+| `ForTesting/agents/planner_via_orchestrator_cli.py` | CLI harness for planner-only  validation through orchestrator checkpoint flow |
 | `Logging/__init__.py` | Production structured logger (JSON files, ring buffer, ANSI) |
 | `DataScraper/` | Data collection connectors (placeholder currently; connectors planned) |
 | `prompts/` | Global prompt template manager + raw `.txt` templates |
@@ -194,7 +195,7 @@ Pipeline flow:  Plan → Search → Scrape → Clean → Sentiment → Dashboard
 | `server/services/pipeline.py` | Pipeline runner bridge (demo + live modes) |
 | `server/services/__init__.py` | Mock data generator (`generate_mock_result()`) |
 | `Interface/` | **Frontend** — Bun + React + TanStack + Recharts + shadcn/ui |
-| `docs/agents/` | Agent-by-agent architecture docs (orchestrator/planner/... and future agents) |
+| `docs/agents/` | Agent-by-agent architecture docs (orchestrator/planner/harvester/scraper/cleaner/sentimental) |
 | `docs/FEATURES.md` | Detailed feature documentation (export, compare, versioning) |
 | `docs/MCP.md` | MCP integration guide (stdio/http, config, examples) |
 | `data/scrapes/` | SQLite DBs per topic (gitignored) |
@@ -212,7 +213,6 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 - **What this IS**: A "Self-Driving Research Lab" for sentiment analysis. User provides a topic → system autonomously collects data → runs sentiment → shows results on a real-time dashboard.
 - **Primary use case**: Election sentiment monitoring (e.g., "Nepal elections 2026"), but system is topic-agnostic.
 - **Full pipeline**: Topic → Keywords → Link Harvest (SQLite) → Deep Scrape (MongoDB) → Clean → Sentiment (HuggingFace model) → Vector DB → Convex DB → Dashboard + RAG chat.
-- **Sentiment analysis uses a dedicated HuggingFace model, NOT an LLM.** LLMs are too slow and expensive for per-post scoring at scale. The sentiment model runs locally and is purpose-built for classification. Never route sentiment through `BaseLLM`.
 - **Read `docs/VISION.md`** for the complete end-to-end pipeline diagram and architecture. It's the canonical source of truth for *what* we're building. This file (`AGENTS.md`) is the canonical source for *how* to work on it.
 
 ### Critical Architecture Decisions (and WHY)
@@ -229,6 +229,7 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 - **To test the current implemented pipeline end-to-end**: `uv run python main.py --demo -t "any topic"` — runs orchestrator → planner → harvester → scraper with static fallbacks, no API keys needed.
 - **To test the entire BaseLLM chain**: `get_llm("dummy").generate("test")` → returns `[DUMMY-LLM] test`. No API keys needed.
 - **The `python` command may not work** on some setups — use `python3` explicitly if `python` produces no output.
+- **Planner-only CLI smoke test**: `LOG_LEVEL=ERROR uv run python ForTesting/agents/planner_via_orchestrator_cli.py --topic "<topic>" --provider copilot/ollama --model gpt-4o/minimax-m2.7:cloud`
 - **Copilot planner fallback is provider-aware**: planner now skips `with_structured_output()` when provider is `copilot`, then attempts JSON recovery from text output, including normalization of alternate keys (`topic`, `platform_strategies`) into `ResearchPlan` fields.
 - **Standard structured-output fallback utility now exists**: `utils.structured_output.invoke_model_with_structured_recovery()` is the reusable path for all agents/sub-agents that need schema output with parse-first and repair-second behavior.
 - **Cleaner/Sentiment planner sub-agents now use shared structured recovery too**: both planner sub-agents are no longer strictly dependent on `with_structured_output()` and can recover from text output when provider support is weak.
@@ -236,6 +237,8 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 - **Same-context re-ask remains available**: when parse still fails, utility can send a strict-JSON correction prompt in the same message context.
 - **Structured-output capability is centralized in BaseLLM adapters**: use `llm_adapter.supports_structured_output` instead of hardcoded provider checks in each agent (`CopilotAdapter` currently sets this to `False`).
 - **Structured recovery emits explicit logs per stage**: start/fallback/success/failure paths are logged under `utils.structured_output` with schema + mode metadata for easier run forensics.
+- **Structured recovery now guards fallback invocation errors**: if the raw-text fallback call itself fails (for example provider timeout), utility returns a structured `failed` result with `fallback_error` metadata instead of crashing the agent path.
+- **Structured-disabled is now treated as a skip, not an error**: recovery results include `structured_skipped=True` when provider capability is intentionally off, and planner stores `planner_structured_skipped` artifact instead of `planner_structured_error` noise.
 - **Harvester + recovery sub-agents now share the same structured resilience path**: `HarvesterAgent._build_harvest_plan`, `ScraperRecoveryAgent`, `CleanerRecoveryAgent`, and `SentimentRecoveryAgent` no longer hard-fail immediately on malformed structured output.
 - **Harvester persistence now logs structured failure stages**: plan generation writes `harvester_plan_structured_error`, `harvester_plan_parse_error`, `harvester_plan_reask_error`, and `harvester_plan_repair_error` artifacts before deterministic fallback.
 - **Torch does not ship cp313 wheels yet**. GPU sentiment testing currently requires Python 3.12 (use `.venv-py312` or another 3.12 venv).
@@ -267,7 +270,7 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 - **Planner persistence is append-only and shared across demo/live**: every run creates/uses `data/scrapes/<topic>.db` and writes both user/topic inputs + planner artifacts, so crashes are debuggable and resumable.
 - **Topic DB bootstrap is now orchestrator-owned**: when topic is received, orchestrator first writes to central `orchestrator.db` (`topic_runs`) and initializes topic DB before planner invocation.
 - **Agent lifecycle status is checkpointed in topic DB**: `agent_status` table tracks `working/retrying/completed/failed`, retry count, last error, and timestamps for resume/debug.
-- **Planner can do tool-based web grounding**: planner runs a tool-calling context pass via `search_engine_snippets` (Serper or DuckDuckGo engine) before producing the structured `ResearchPlan`.  The tool accepts an ``engine`` parameter so you can experiment with ``"duckduckgo"`` for alternative search results.
+- **Planner starts with LLM to get the query keywords for that topic, then programatically calls tools with query keywords to get idea of web content, then summarizes those snippets via LLM**. This is more transparent and debuggable than having the planner call tool(search_engine_snippets). So, at last PlannerAgent step, the agent gets full idea of the web-context when making the final plan, and that final plan is persisted in the topic DB.
 - **Harvester persistence now uses a two-layer model**: `discovered_links` stores canonical deduplicated URLs, while `link_observations` stores every raw observation from every source. Deduplication happens in the async writer, not in source code.
 - **New harvest sources available**: adapters for SerpAPI (search) and Camoufox (browser discovery) live under `utils/serpapi.py` and `utils/camoufox.py`. The Camoufox helper supports three modes:
   1. remote HTTP server (`CAMOUFOX_ENDPOINT`),

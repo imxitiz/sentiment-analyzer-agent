@@ -40,7 +40,9 @@ class StructuredRecoveryResult(Generic[TModel]):
     output_text: str
     raw_text: str
     structured_error: str | None = None
+    structured_skipped: bool = False
     parse_error: str | None = None
+    fallback_error: str | None = None
     reask_error: str | None = None
     reask_attempts: int = 0
     repair_error: str | None = None
@@ -53,7 +55,7 @@ def _extract_json_candidates(text: str) -> list[str]:
         return []
 
     candidates: list[str] = [raw]
-
+    
     fenced = re.findall(r"```(?:json)?\s*([\s\S]*?)\s*```", raw)
     for block in fenced:
         block = block.strip()
@@ -153,7 +155,13 @@ def _retry_with_same_context(
             parse_error=parse_error,
         )
         retry_messages = [*messages, HumanMessage(content=retry_prompt)]
-        retry_response = llm_adapter.chat_model.invoke(retry_messages)
+        if hasattr(llm_adapter, "invoke_messages"):
+            retry_response = llm_adapter.invoke_messages(
+                retry_messages,
+                call_kind="structured_reask_invoke",
+            )
+        else:
+            retry_response = llm_adapter.chat_model.invoke(retry_messages)
         current_output = _as_text(retry_response)
         parsed, parse_error = _parse_model_from_text(
             current_output,
@@ -224,10 +232,18 @@ def invoke_model_with_structured_recovery(
         },
     )
 
+    structured_skipped = False
     if supports_structured:
         try:
-            structured_llm = llm_adapter.chat_model.with_structured_output(schema_model)
-            structured_result = structured_llm.invoke(messages)
+            if hasattr(llm_adapter, "invoke_structured"):
+                structured_result = llm_adapter.invoke_structured(
+                    messages,
+                    schema_model=schema_model,
+                    call_kind="structured_invoke",
+                )
+            else:
+                structured_llm = llm_adapter.chat_model.with_structured_output(schema_model)
+                structured_result = structured_llm.invoke(messages)
             if isinstance(structured_result, schema_model):
                 model_value = structured_result
             else:
@@ -242,6 +258,7 @@ def invoke_model_with_structured_recovery(
                 mode="structured",
                 output_text=output,
                 raw_text=output,
+                structured_skipped=structured_skipped,
             )
         except Exception as exc:
             structured_error = str(exc)
@@ -252,7 +269,8 @@ def invoke_model_with_structured_recovery(
                 meta={"schema": schema_model.__name__, "error": structured_error},
             )
     else:
-        structured_error = "Structured output disabled for this provider"
+        structured_error = None
+        structured_skipped = True
         _log.warn(
             "Structured output disabled for provider",
             action="structured_recovery_fallback",
@@ -260,7 +278,28 @@ def invoke_model_with_structured_recovery(
             meta={"schema": schema_model.__name__},
         )
 
-    raw_text = fallback_text_getter().strip()
+    try:
+        raw_text = fallback_text_getter().strip()
+    except Exception as exc:
+        fallback_error = str(exc)
+        _log.error(
+            "Fallback text invocation failed",
+            action="structured_recovery_failed",
+            reason="fallback_invoke_failed",
+            meta={"schema": schema_model.__name__, "error": fallback_error},
+            exc_info=True,
+        )
+        return StructuredRecoveryResult(
+            value=None,
+            mode="failed",
+            output_text="",
+            raw_text="",
+            structured_error=structured_error,
+            structured_skipped=structured_skipped,
+            parse_error="fallback_text_getter_failed",
+            fallback_error=fallback_error,
+        )
+
     parsed_model, parse_error = _parse_model_from_text(
         raw_text,
         schema_model=schema_model,
@@ -279,6 +318,8 @@ def invoke_model_with_structured_recovery(
             output_text=output,
             raw_text=raw_text,
             structured_error=structured_error,
+            structured_skipped=structured_skipped,
+            fallback_error=None,
         )
 
     reask_attempts = 0
@@ -320,6 +361,7 @@ def invoke_model_with_structured_recovery(
                     output_text=output,
                     raw_text=raw_text,
                     structured_error=structured_error,
+                    structured_skipped=structured_skipped,
                     parse_error=parse_error,
                     reask_error=reask_error,
                     reask_attempts=reask_attempts,
@@ -347,6 +389,7 @@ def invoke_model_with_structured_recovery(
                         output_text=output,
                         raw_text=raw_text,
                         structured_error=structured_error,
+                        structured_skipped=structured_skipped,
                         parse_error=parse_error,
                         reask_error=reask_error,
                         reask_attempts=reask_attempts,
@@ -358,17 +401,28 @@ def invoke_model_with_structured_recovery(
             if max_reasks <= 0:
                 continue
 
-            reasked_model, reasked_text, reask_error, reask_attempts = (
-                _retry_with_same_context(
-                    llm_adapter=llm_adapter,
-                    schema_model=schema_model,
-                    messages=messages,
-                    first_output=raw_text,
-                    normalize_payload=normalize_payload,
-                    max_reasks=max_reasks,
-                    initial_parse_error=parse_error,
+            try:
+                reasked_model, reasked_text, reask_error, reask_attempts = (
+                    _retry_with_same_context(
+                        llm_adapter=llm_adapter,
+                        schema_model=schema_model,
+                        messages=messages,
+                        first_output=raw_text,
+                        normalize_payload=normalize_payload,
+                        max_reasks=max_reasks,
+                        initial_parse_error=parse_error,
+                    )
                 )
-            )
+            except Exception as exc:
+                reask_error = str(exc)
+                _log.warning(
+                    "Structured recovery re-ask stage failed",
+                    action="structured_recovery_fallback",
+                    reason="reask_failed",
+                    meta={"schema": schema_model.__name__, "error": reask_error},
+                    exc_info=True,
+                )
+                continue
             if reasked_model is not None:
                 output = reasked_model.model_dump_json(indent=2)
                 _log.success(
@@ -386,7 +440,9 @@ def invoke_model_with_structured_recovery(
                     output_text=output,
                     raw_text=raw_text,
                     structured_error=structured_error,
+                    structured_skipped=structured_skipped,
                     parse_error=parse_error,
+                    fallback_error=None,
                     reask_attempts=reask_attempts,
                     repair_error=repair_error,
                     repaired_text=repaired_text,
@@ -401,6 +457,7 @@ def invoke_model_with_structured_recovery(
             "schema": schema_model.__name__,
             "structured_error": structured_error,
             "parse_error": parse_error,
+            "fallback_error": None,
             "reask_error": reask_error,
             "reask_attempts": reask_attempts,
             "repair_error": repair_error,
@@ -412,7 +469,9 @@ def invoke_model_with_structured_recovery(
         output_text=raw_text,
         raw_text=raw_text,
         structured_error=structured_error,
+        structured_skipped=structured_skipped,
         parse_error=parse_error,
+        fallback_error=None,
         reask_error=reask_error,
         reask_attempts=reask_attempts,
         repair_error=repair_error,

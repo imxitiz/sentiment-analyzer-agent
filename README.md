@@ -47,6 +47,10 @@ An end-to-end project to collect, analyze, and report public sentiment from soci
 - [ ] Dashboard / Streamlit prototype
 - [ ] Deployment & monitoring
 
+## Website
+
+![Web-Interface](platform-images/web-interface.png)
+
 ---
 
 ## Contributing
