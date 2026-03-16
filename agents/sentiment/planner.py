@@ -13,6 +13,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from agents.base import BaseAgent
 from agents.sentiment.models import SentimentPlan
+from utils.structured_output import invoke_model_with_structured_recovery
 
 
 class SentimentPlannerAgent(BaseAgent):
@@ -62,25 +63,53 @@ class SentimentPlannerAgent(BaseAgent):
                 "plan": plan,
             }
 
-        structured_llm = self._llm_adapter.chat_model.with_structured_output(
-            SentimentPlan
+        messages = [
+            SystemMessage(content=self._system_prompt),
+            HumanMessage(content=message),
+        ]
+
+        fallback_result: dict[str, Any] = {"messages": messages, "output": ""}
+
+        def _fallback_text_getter() -> str:
+            nonlocal fallback_result
+            fallback_result = self._invoke_direct(message, **kwargs)
+            return str(fallback_result.get("output", ""))
+
+        recovery = invoke_model_with_structured_recovery(
+            llm_adapter=self._llm_adapter,
+            schema_model=SentimentPlan,
+            messages=messages,
+            supports_structured=self._llm_adapter.supports_structured_output,
+            fallback_text_getter=_fallback_text_getter,
+            repair_prompt_builder=self._build_repair_prompt,
+            repair_max_tokens=2048,
         )
-        result = structured_llm.invoke(
-            [
-                SystemMessage(content=self._system_prompt),
-                HumanMessage(content=message),
-            ]
-        )
-        plan = (
-            result
-            if isinstance(result, SentimentPlan)
-            else SentimentPlan.model_validate(result)
-        )
+
+        if recovery.value is None:
+            raise RuntimeError(
+                "Sentiment planner structured recovery failed"
+                f" (structured_error={recovery.structured_error},"
+                f" parse_error={recovery.parse_error},"
+                f" repair_error={recovery.repair_error})"
+            )
+
+        plan = recovery.value
         return {
-            "messages": [],
-            "output": plan.model_dump_json(indent=2),
+            "messages": fallback_result.get("messages", messages),
+            "output": recovery.output_text,
             "plan": plan,
         }
+
+    def _build_repair_prompt(self, raw_text: str) -> str:
+        return (
+            "Convert the following sentiment planning output into strict JSON with only these keys: "
+            "strategy_summary, model, positive_threshold, negative_threshold, include_topic_context, "
+            "topic_context_weight, min_confidence_threshold, auto_retry_low_confidence, "
+            "custom_keywords_positive, custom_keywords_negative, language_override, confidence. "
+            "Return JSON object only. No markdown, no extra text.\n\n"
+            "Raw output:\n"
+            f"{raw_text}"
+        )
 
     def _demo_plan(self, message: str) -> SentimentPlan:
         """Generate a demo plan for testing without LLM.

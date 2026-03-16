@@ -153,6 +153,7 @@ Pipeline flow:  Plan → Search → Scrape → Clean → Sentiment → Dashboard
 | `utils/serper.py` | Central Serper adapter utility (real API + demo fallback payload) |
 | `utils/firecrawl.py` | Central Firecrawl REST adapter (search, scrape, browser sessions) |
 | `utils/serpapi.py` | Lightweight SerpAPI search adapter |
+| `utils/structured_output.py` | Shared structured-output recovery utilities (parse JSON candidates + optional LLM repair pass) |
 | `utils/camoufox.py` | Flexible Camoufox integration: remote server, local Python API, or CLI wrapper |
 | `utils/crawlbase.py` | Central Crawlbase adapter for rendered page fetches |
 | `utils/bluesky.py` | Bluesky public API adapter (`resolveHandle` + `getPostThread`) |
@@ -228,6 +229,15 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 - **To test the current implemented pipeline end-to-end**: `uv run python main.py --demo -t "any topic"` — runs orchestrator → planner → harvester → scraper with static fallbacks, no API keys needed.
 - **To test the entire BaseLLM chain**: `get_llm("dummy").generate("test")` → returns `[DUMMY-LLM] test`. No API keys needed.
 - **The `python` command may not work** on some setups — use `python3` explicitly if `python` produces no output.
+- **Copilot planner fallback is provider-aware**: planner now skips `with_structured_output()` when provider is `copilot`, then attempts JSON recovery from text output, including normalization of alternate keys (`topic`, `platform_strategies`) into `ResearchPlan` fields.
+- **Standard structured-output fallback utility now exists**: `utils.structured_output.invoke_model_with_structured_recovery()` is the reusable path for all agents/sub-agents that need schema output with parse-first and repair-second behavior.
+- **Cleaner/Sentiment planner sub-agents now use shared structured recovery too**: both planner sub-agents are no longer strictly dependent on `with_structured_output()` and can recover from text output when provider support is weak.
+- **Structured recovery now supports configurable stage ordering**: `invoke_model_with_structured_recovery()` can run `repair_then_reask` (default, fewer calls when output is mostly formatting) or `reask_then_repair` when semantic rewrite is preferred.
+- **Same-context re-ask remains available**: when parse still fails, utility can send a strict-JSON correction prompt in the same message context.
+- **Structured-output capability is centralized in BaseLLM adapters**: use `llm_adapter.supports_structured_output` instead of hardcoded provider checks in each agent (`CopilotAdapter` currently sets this to `False`).
+- **Structured recovery emits explicit logs per stage**: start/fallback/success/failure paths are logged under `utils.structured_output` with schema + mode metadata for easier run forensics.
+- **Harvester + recovery sub-agents now share the same structured resilience path**: `HarvesterAgent._build_harvest_plan`, `ScraperRecoveryAgent`, `CleanerRecoveryAgent`, and `SentimentRecoveryAgent` no longer hard-fail immediately on malformed structured output.
+- **Harvester persistence now logs structured failure stages**: plan generation writes `harvester_plan_structured_error`, `harvester_plan_parse_error`, `harvester_plan_reask_error`, and `harvester_plan_repair_error` artifacts before deterministic fallback.
 - **Torch does not ship cp313 wheels yet**. GPU sentiment testing currently requires Python 3.12 (use `.venv-py312` or another 3.12 venv).
 - **Transformers now requires `torch>=2.6` to load `.bin` weights** due to CVE-2025-32434, and the Cardiff model ships `pytorch_model.bin` (no safetensors). Upgrade torch or pick a safetensors model.
 - **GPU smoke test script** lives at `ForTesting/sentiment_gpu_smoke.py`, and a full run log is documented in `docs/testing/sentiment_gpu_smoke.md`.

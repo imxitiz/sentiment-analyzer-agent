@@ -41,6 +41,7 @@ class BaseLLMAdapter(ABC):
     _provider: str = ""  # e.g. "google"
     _default_model: str = ""  # e.g. "gemini-2.5-flash-lite"
     _registry_models: tuple[str, ...] = ()
+    _supports_structured_output: bool = True
 
     def __init__(
         self,
@@ -102,6 +103,11 @@ class BaseLLMAdapter(ABC):
     def model_name(self) -> str:
         """Currently-selected model name."""
         return self._model
+
+    @property
+    def supports_structured_output(self) -> bool:
+        """Whether this provider should use native structured output paths."""
+        return self._supports_structured_output
 
     # ── Core capabilities (concrete) ──────────────────────────────────
 

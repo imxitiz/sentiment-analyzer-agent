@@ -48,6 +48,7 @@ from agents.services import (
 )
 from agents.tools.search import search_engine_snippets
 from Logging import get_logger
+from utils.structured_output import invoke_model_with_structured_recovery
 
 logger = get_logger("agents.planner")
 
@@ -177,16 +178,63 @@ class PlannerAgent(BaseAgent):
             ),
         ]
 
-        # Try structured output first
-        try:
-            plan = self._invoke_structured(messages)
-            output = plan.model_dump_json(indent=2)
+        fallback_result: dict[str, Any] = {"messages": messages, "output": ""}
+
+        def _fallback_text_getter() -> str:
+            nonlocal fallback_result
+            fallback_result = self._invoke_direct(message, **kwargs)
+            self._log.success("Plan generated (text fallback)", action="plan")
+            return str(fallback_result.get("output", ""))
+
+        recovery = invoke_model_with_structured_recovery(
+            llm_adapter=self._llm_adapter,
+            schema_model=ResearchPlan,
+            messages=messages,
+            supports_structured=self._llm_adapter.supports_structured_output,
+            fallback_text_getter=_fallback_text_getter,
+            normalize_payload=self._normalize_plan_payload,
+            repair_prompt_builder=lambda raw: self._build_plan_repair_prompt(
+                topic=topic,
+                raw_plan_text=raw,
+            ),
+            repair_max_tokens=2048,
+        )
+
+        if recovery.structured_error is not None:
+            save_pipeline_artifact(
+                topic,
+                source_agent=self._name,
+                artifact_type="planner_structured_error",
+                value=recovery.structured_error,
+                meta={"mode": recovery.mode},
+            )
+        if recovery.parse_error is not None:
+            save_pipeline_artifact(
+                topic,
+                source_agent=self._name,
+                artifact_type="planner_parse_error",
+                value=recovery.parse_error,
+                meta={"mode": recovery.mode},
+            )
+        if recovery.repair_error is not None:
+            save_pipeline_artifact(
+                topic,
+                source_agent=self._name,
+                artifact_type="planner_repair_error",
+                value=recovery.repair_error,
+                meta={"mode": recovery.mode},
+            )
+
+        if recovery.value is not None:
+            plan = recovery.value
             self._log.success(
-                "Plan generated (structured)  keywords=%d  queries=%d",
+                "Plan generated (%s)  keywords=%d  queries=%d",
+                recovery.mode,
                 len(plan.keywords),
                 len(plan.search_queries),
                 action="plan",
                 meta={
+                    "mode": recovery.mode,
                     "keyword_count": len(plan.keywords),
                     "hashtag_count": len(plan.hashtags),
                     "platform_count": len(plan.platforms),
@@ -196,38 +244,83 @@ class PlannerAgent(BaseAgent):
             save_planner_plan(
                 topic,
                 plan=plan,
-                raw_output=output,
+                raw_output=recovery.raw_text,
                 source_agent=self._name,
             )
             return {
-                "messages": messages,
-                "output": output,
+                "messages": fallback_result.get("messages", messages),
+                "output": recovery.output_text,
                 "plan": plan,
             }
 
-        except Exception as exc:
-            self._log.warning(
-                "Structured output failed, falling back to text: %s",
-                exc,
-                action="plan_fallback",
-            )
-            save_pipeline_artifact(
-                topic,
-                source_agent=self._name,
-                artifact_type="planner_structured_error",
-                value=str(exc),
-            )
-
-        # Fallback: plain text response
-        result = self._invoke_direct(message, **kwargs)
-        self._log.success("Plan generated (text fallback)", action="plan")
         save_pipeline_artifact(
             topic,
             source_agent=self._name,
             artifact_type="planner_text_output",
-            value=result.get("output", ""),
+            value=recovery.raw_text,
         )
-        return result
+        return {
+            "messages": fallback_result.get("messages", messages),
+            "output": recovery.output_text,
+        }
+
+    def _normalize_plan_payload(self, payload: Any) -> Any:
+        """Normalize alternate planner JSON shapes to the ResearchPlan schema."""
+        if not isinstance(payload, dict):
+            return payload
+
+        normalized = dict(payload)
+        if "topic_summary" not in normalized and "topic" in normalized:
+            normalized["topic_summary"] = str(normalized.get("topic", "")).strip()
+
+        if "platforms" not in normalized and isinstance(
+            normalized.get("platform_strategies"), dict
+        ):
+            platform_items = []
+            entries = list(normalized["platform_strategies"].items())
+            for idx, (name, details) in enumerate(entries):
+                detail_dict = details if isinstance(details, dict) else {}
+                approach = str(detail_dict.get("approach", "")).strip()
+                if idx <= 1:
+                    priority = "high"
+                elif idx <= 3:
+                    priority = "medium"
+                else:
+                    priority = "low"
+                platform_items.append(
+                    {
+                        "name": str(name),
+                        "priority": priority,
+                        "reason": approach or f"Sentiment source: {name}",
+                    }
+                )
+            normalized["platforms"] = platform_items
+
+        normalized.setdefault("estimated_volume", "Target 2,000-5,000 posts/documents")
+        normalized.setdefault(
+            "stop_condition",
+            "Stop when sentiment trends stabilize across platforms for 48 hours",
+        )
+        normalized.setdefault(
+            "reasoning",
+            "Blend platform-level social signals with cross-source query coverage.",
+        )
+
+        return normalized
+
+    def _build_plan_repair_prompt(self, *, topic: str, raw_plan_text: str) -> str:
+        """Build repair prompt for converting free-form plan text to strict schema."""
+        return (
+            "Convert the following research plan into strict JSON for this schema keys only: "
+            "topic_summary, keywords, hashtags, platforms, search_queries, estimated_volume, "
+            "stop_condition, reasoning. "
+            "Rules: return JSON object only, no markdown, no explanation. "
+            "platforms must be a list of objects with keys: name, priority, reason. "
+            "keywords/hashtags/search_queries must be lists of strings. "
+            f"Topic: {topic}\n\n"
+            "Raw plan text:\n"
+            f"{raw_plan_text}"
+        )
 
     def _invoke_structured(self, messages: list) -> ResearchPlan:
         """Call LLM with structured output binding."""

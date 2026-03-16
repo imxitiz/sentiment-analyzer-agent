@@ -32,6 +32,7 @@ from agents.services import (
     select_expansion_seeds,
     start_harvest_run,
 )
+from utils.structured_output import invoke_model_with_structured_recovery
 
 
 CollectorFunc = Callable[..., Awaitable[Any]]
@@ -272,26 +273,78 @@ class HarvesterAgent(BaseAgent):
                 )
             ),
         ]
-        try:
-            structured_llm = self._llm_adapter.chat_model.with_structured_output(
-                HarvestPlan
-            )
-            result = structured_llm.invoke(messages)
-            plan = (
-                result
-                if isinstance(result, HarvestPlan)
-                else HarvestPlan.model_validate(result)
-            )
-            if not plan.tasks:
-                raise ValueError("Structured harvester plan returned no tasks.")
-            return plan
-        except Exception as exc:
+
+        def _fallback_text_getter() -> str:
+            response = self._llm_adapter.chat_model.invoke(messages)
+            content = response.content if hasattr(response, "content") else response
+            if isinstance(content, list):
+                return "\n".join(str(item) for item in content)
+            return str(content)
+
+        recovery = invoke_model_with_structured_recovery(
+            llm_adapter=self._llm_adapter,
+            schema_model=HarvestPlan,
+            messages=messages,
+            supports_structured=self._llm_adapter.supports_structured_output,
+            fallback_text_getter=_fallback_text_getter,
+            repair_prompt_builder=self._build_harvest_plan_repair_prompt,
+            max_reasks=2,
+            repair_max_tokens=2048,
+        )
+
+        if recovery.structured_error is not None:
             self._checkpoint_artifact(
                 topic=topic,
-                artifact_type="harvester_plan_fallback",
-                value=str(exc),
+                artifact_type="harvester_plan_structured_error",
+                value=recovery.structured_error,
+                meta={"mode": recovery.mode},
             )
-            return self._demo_plan(brief, runtime)
+        if recovery.parse_error is not None:
+            self._checkpoint_artifact(
+                topic=topic,
+                artifact_type="harvester_plan_parse_error",
+                value=recovery.parse_error,
+                meta={"mode": recovery.mode},
+            )
+        if recovery.reask_error is not None:
+            self._checkpoint_artifact(
+                topic=topic,
+                artifact_type="harvester_plan_reask_error",
+                value=recovery.reask_error,
+                meta={"mode": recovery.mode, "attempts": recovery.reask_attempts},
+            )
+        if recovery.repair_error is not None:
+            self._checkpoint_artifact(
+                topic=topic,
+                artifact_type="harvester_plan_repair_error",
+                value=recovery.repair_error,
+                meta={"mode": recovery.mode},
+            )
+
+        plan = recovery.value
+        if plan is not None and plan.tasks:
+            return plan
+
+        self._checkpoint_artifact(
+            topic=topic,
+            artifact_type="harvester_plan_fallback",
+            value="Structured recovery failed or returned empty tasks; using deterministic fallback plan",
+            meta={"mode": recovery.mode, "reask_attempts": recovery.reask_attempts},
+        )
+        return self._demo_plan(brief, runtime)
+
+    @staticmethod
+    def _build_harvest_plan_repair_prompt(raw_text: str) -> str:
+        return (
+            "Convert the following harvester planning output into strict JSON for HarvestPlan. "
+            "Return JSON object only with keys: summary, source_order, max_links, "
+            "min_quality_score, tasks. "
+            "Each tasks item must include: source, query, rationale, desired_count, "
+            "priority, query_type, required, tags. "
+            "No markdown, no extra text.\n\n"
+            "Raw output:\n"
+            f"{raw_text}"
+        )
 
     def _demo_plan(self, brief: Any, runtime: HarvesterRuntimeConfig) -> HarvestPlan:
         tasks = build_fallback_harvest_tasks(brief, runtime)

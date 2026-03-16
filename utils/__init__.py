@@ -24,6 +24,10 @@ from .camoufox import (
     camoufox_start_browser,
     camoufox_type,
 )
+from .structured_output import (
+    StructuredRecoveryResult,
+    invoke_model_with_structured_recovery,
+)
 
 __all__ = [
     "crawlbase_fetch_url",
@@ -46,4 +50,6 @@ __all__ = [
     "camoufox_navigate",
     "camoufox_start_browser",
     "camoufox_type",
+    "StructuredRecoveryResult",
+    "invoke_model_with_structured_recovery",
 ]

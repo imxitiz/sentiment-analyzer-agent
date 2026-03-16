@@ -25,6 +25,7 @@ class CopilotAdapter(BaseLLMAdapter):
     _provider = "copilot"
     _default_model = COPILOT_DEFAULT
     _registry_models = COPILOT_MODELS
+    _supports_structured_output = False
 
     def __init__(
         self,
@@ -52,7 +53,9 @@ class CopilotAdapter(BaseLLMAdapter):
             from langchain_copilot import CopilotChatModel
         except ImportError as exc:
             raise ImportError(
-                "langchain-copilot is required. Install with: pip install langchain-copilot"
+                "langchain-copilot is required. Install with: pip install langchain-copilot",
+                "LangChain integration for GitHub Copilot SDK - Use GitHub Copilot models in your LangChain applications.",
+                "https://github.com/imxitiz/github-copilot-langchain",
             ) from exc
 
         self._llm = CopilotChatModel(

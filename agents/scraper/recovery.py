@@ -9,6 +9,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from agents.base import BaseAgent
 from agents.scraper.models import RecoveryPlan
+from utils.structured_output import invoke_model_with_structured_recovery
 
 
 class ScraperRecoveryAgent(BaseAgent):
@@ -32,25 +33,46 @@ class ScraperRecoveryAgent(BaseAgent):
                 "recovery_plan": plan,
             }
 
-        structured_llm = self._llm_adapter.chat_model.with_structured_output(
-            RecoveryPlan
-        )
-        result = structured_llm.invoke(
-            [
-                SystemMessage(content=self._system_prompt),
-                HumanMessage(content=message),
-            ]
+        messages = [
+            SystemMessage(content=self._system_prompt),
+            HumanMessage(content=message),
+        ]
+
+        def _fallback_text_getter() -> str:
+            response = self._llm_adapter.chat_model.invoke(messages)
+            content = response.content if hasattr(response, "content") else response
+            if isinstance(content, list):
+                return "\n".join(str(item) for item in content)
+            return str(content)
+
+        recovery = invoke_model_with_structured_recovery(
+            llm_adapter=self._llm_adapter,
+            schema_model=RecoveryPlan,
+            messages=messages,
+            supports_structured=self._llm_adapter.supports_structured_output,
+            fallback_text_getter=_fallback_text_getter,
+            repair_prompt_builder=self._build_repair_prompt,
+            max_reasks=2,
+            repair_max_tokens=1024,
         )
         plan = (
-            result
-            if isinstance(result, RecoveryPlan)
-            else RecoveryPlan.model_validate(result)
+            recovery.value if recovery.value is not None else self._demo_plan(message)
         )
         return {
-            "messages": [],
+            "messages": messages,
             "output": plan.model_dump_json(indent=2),
             "recovery_plan": plan,
         }
+
+    @staticmethod
+    def _build_repair_prompt(raw_text: str) -> str:
+        return (
+            "Convert the following scraper recovery output into strict JSON with only these keys: "
+            "should_retry, recommended_backend, mark_terminal, reason. "
+            "Return JSON object only, no markdown.\n\n"
+            "Raw output:\n"
+            f"{raw_text}"
+        )
 
     def _demo_plan(self, message: str) -> RecoveryPlan:
         try:
