@@ -179,6 +179,7 @@ Pipeline flow:  Plan → Search → Scrape → Clean → Sentiment → Dashboard
 | `BaseLLM/adapter.py` | `BaseLLMAdapter` ABC — DRY base with sync/async generate |
 | `BaseLLM/_registry.py` | Single source of truth for all model names & provider aliases |
 | `BaseLLM/main.py` | `get_llm()` factory + `DummyAdapter` (zero-dependency) |
+| `ForTesting/agents/planner_and_harvester.py` | CLI harness for planner+harvester smoke validation with planner artifact reuse (`--planner-mode auto/run/reuse`) |
 | `ForTesting/agents/planner_via_orchestrator_cli.py` | CLI harness for planner-only  validation through orchestrator checkpoint flow |
 | `Logging/__init__.py` | Production structured logger (JSON files, ring buffer, ANSI) |
 | `DataScraper/` | Data collection connectors (placeholder currently; connectors planned) |
@@ -229,6 +230,8 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 - **To test the current implemented pipeline end-to-end**: `uv run python main.py --demo -t "any topic"` — runs orchestrator → planner → harvester → scraper with static fallbacks, no API keys needed.
 - **To test the entire BaseLLM chain**: `get_llm("dummy").generate("test")` → returns `[DUMMY-LLM] test`. No API keys needed.
 - **The `python` command may not work** on some setups — use `python3` explicitly if `python` produces no output.
+- **Planner+Harvester smoke test CLI**: `uv run python ForTesting/agents/planner_and_harvester.py --topic "<topic>" --planner-mode auto` (use `--planner-mode reuse` to skip planner and continue from existing planner artifacts in topic DB).
+- **Rerun same topic from scratch (planner + harvester)**: use planner mode `run` in the smoke CLI. This forces planner regeneration even when artifacts already exist.
 - **Planner-only CLI smoke test**: `LOG_LEVEL=ERROR uv run python ForTesting/agents/planner_via_orchestrator_cli.py --topic "<topic>" --provider copilot/ollama --model gpt-4o/minimax-m2.7:cloud`
 - **Copilot planner fallback is provider-aware**: planner now skips `with_structured_output()` when provider is `copilot`, then attempts JSON recovery from text output, including normalization of alternate keys (`topic`, `platform_strategies`) into `ResearchPlan` fields.
 - **Standard structured-output fallback utility now exists**: `utils.structured_output.invoke_model_with_structured_recovery()` is the reusable path for all agents/sub-agents that need schema output with parse-first and repair-second behavior.
@@ -272,6 +275,13 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 - **Agent lifecycle status is checkpointed in topic DB**: `agent_status` table tracks `working/retrying/completed/failed`, retry count, last error, and timestamps for resume/debug.
 - **Planner starts with LLM to get the query keywords for that topic, then programatically calls tools with query keywords to get idea of web content, then summarizes those snippets via LLM**. This is more transparent and debuggable than having the planner call tool(search_engine_snippets). So, at last PlannerAgent step, the agent gets full idea of the web-context when making the final plan, and that final plan is persisted in the topic DB.
 - **Harvester persistence now uses a two-layer model**: `discovered_links` stores canonical deduplicated URLs, while `link_observations` stores every raw observation from every source. Deduplication happens in the async writer, not in source code.
+- **Harvester now records LLM traces too**: `HarvesterAgent.invoke()` enters `llm_trace_context`, so harvest-plan LLM input/output should appear in topic DB `llm_traces` alongside planner traces.
+- **Camoufox collector now runs in worker threads**: `collect_camoufox_browser_results()` wraps `camoufox_fetch_anchors()` with `asyncio.to_thread(...)` and uses query URLs, avoiding the sync-Playwright-inside-async-loop runtime error.
+- **Camoufox harvesting now forces true headless mode**: collectors pass `headless=True` to avoid the `Xvfb` requirement of Camoufox `virtual` mode in server/CI environments.
+- **Harvester no longer performs Crawlbase expansion**: harvesting now focuses on Serper + Firecrawl + Camoufox browser discovery; Crawlbase remains available for scraper/rendered fetch use-cases.
+- **Platform labeling now includes wiki/common domains**: domain inference recognizes `wikipedia.org`/`wikidata.org` as `wiki` plus additional platform labels (`hackernews`, `bluesky`, `github`, `medium`, `substack`).
+- **Platform labels must stay canonical for scraper routing**: `discovered_links.platform`/`link_observations.platform` should only contain compact routing labels (for example `web`, `news_site`, `reddit`, `x`, `facebook`, `instagram`, `youtube`, `tiktok`, `wiki`). Never persist descriptive planner text into `platform`; normalize hints and fall back to domain inference.
+- **`published_at` should be recovered from raw payloads when available**: the writer now attempts to parse common date keys (`date`, `published_at`, `pubDate`, timestamps), and metadata backfill runs at harvester start so existing topic rows can be repaired.
 - **New harvest sources available**: adapters for SerpAPI (search) and Camoufox (browser discovery) live under `utils/serpapi.py` and `utils/camoufox.py`. The Camoufox helper supports three modes:
   1. remote HTTP server (`CAMOUFOX_ENDPOINT`),
   2. local Python package (`pip install camoufox[geoip]`),
@@ -564,7 +574,7 @@ class State(TypedDict):
 | `AGENT_<AGENT_NAME>_CIRCUIT_BREAKER_COOLDOWN_SECONDS` | No | — | Per-agent breaker cooldown override |
 | `HARVESTER_MAX_LINKS` | No | `1000` | Upper bound of accepted canonical links stored for a topic |
 | `HARVESTER_MAX_CONCURRENCY` | No | `8` | Maximum concurrent harvesting tasks across sources |
-| `HARVESTER_SOURCE_TIMEOUT_SECONDS` | No | `120` | Per-source timeout for query execution and expansion |
+| `HARVESTER_SOURCE_TIMEOUT_SECONDS` | No | `300` | Per-source timeout for query execution and browser/search collection |
 | `HARVESTER_WRITER_BATCH_SIZE` | No | `50` | SQLite writer queue flush size |
 | `HARVESTER_QUEUE_SIZE` | No | `5000` | In-memory queue capacity before producers backpressure |
 | `HARVESTER_PER_QUERY_LIMIT` | No | `25` | Target raw results per query per source |
@@ -574,7 +584,7 @@ class State(TypedDict):
 | `HARVESTER_ENABLE_SERPER` | No | `true` | Enable Serper query collection |
 | `HARVESTER_ENABLE_FIRECRAWL` | No | `true` | Enable Firecrawl search collection |
 | `HARVESTER_ENABLE_BROWSER_DISCOVERY` | No | `true` | Enable Firecrawl remote-browser discovery on rendered search pages |
-| `HARVESTER_ENABLE_CRAWLBASE` | No | `true` | Enable Crawlbase page expansion from high-quality seed URLs |
+| `HARVESTER_ENABLE_CRAWLBASE` | No | `false` | Legacy flag (harvester expansion is disabled; Crawlbase remains useful in scraper flows) |
 | `HARVESTER_ENABLE_SERPAPI` | No | `false` | Enable SerpAPI search collection |
 | `HARVESTER_ENABLE_CAMOUFOX` | No | `false` | Enable Camoufox browser discovery (requires either a server, the Python package, or CLI) |
 | `CAMOUFOX_ENDPOINT` | No | — | URL of a running Camoufox HTTP server; if unset local Python/CLI mode is used. |
@@ -665,11 +675,12 @@ Per-agent override pattern (optional):
 7. `OrchestratorAgent(llm_provider="dummy").invoke("test")` returns structured output with planner data
 8. `list_agents()` returns `["cleaner", "harvester", "orchestrator", "planner", "scraper"]` — all core agents registered
 9. `HarvesterAgent(llm_provider="dummy").invoke("test")` writes canonical links plus observations into `data/scrapes/test.db`
-10. `run_analysis_live(session_id, topic, provider="gemini")` executes the real orchestrator/planner/harvester/scraper/cleaner flow (requires provider + harvest + scraper readiness) and reports cleaned-doc stats without fabricating sentiment results
-11. `curl http://localhost:8000/api/health` returns `{"status":"ok"}` — backend server smoke test
-12. Create session → start analysis → check WebSocket events stream correctly, including clarification pause/resume when `ask_human()` is invoked
-13. `cd Interface && bun build src/frontend.tsx --outdir=dist` compiles 608 modules without errors
-14. `from utils.camoufox import camoufox_fetch_anchors` should raise a ``RuntimeError`` when no endpoint, package, or CLI is available (covered by tests/test_camoufox.py).
+10. `uv run python ForTesting/agents/planner_and_harvester.py --topic "test" --provider dummy --planner-mode auto` validates orchestrator+planner+harvester smoke flow and reports source/checkpoint stats
+11. `run_analysis_live(session_id, topic, provider="gemini")` executes the real orchestrator/planner/harvester/scraper/cleaner flow (requires provider + harvest + scraper readiness) and reports cleaned-doc stats without fabricating sentiment results
+12. `curl http://localhost:8000/api/health` returns `{"status":"ok"}` — backend server smoke test
+13. Create session → start analysis → check WebSocket events stream correctly, including clarification pause/resume when `ask_human()` is invoked
+14. `cd Interface && bun build src/frontend.tsx --outdir=dist` compiles 608 modules without errors
+15. `from utils.camoufox import camoufox_fetch_anchors` should raise a ``RuntimeError`` when no endpoint, package, or CLI is available (covered by tests/test_camoufox.py).
 
 ---
 

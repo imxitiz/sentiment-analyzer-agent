@@ -56,13 +56,45 @@ _LOW_VALUE_PATTERNS = (
 _PLATFORM_DOMAIN_HINTS: dict[str, tuple[str, ...]] = {
     "reddit": ("reddit.com",),
     "x": ("x.com", "twitter.com"),
-    "twitter": ("x.com", "twitter.com"),
     "facebook": ("facebook.com", "fb.com"),
     "instagram": ("instagram.com",),
     "youtube": ("youtube.com", "youtu.be"),
     "tiktok": ("tiktok.com",),
     "news": ("news.google.com",),
+    "wiki": ("wikipedia.org", "wikidata.org", "wikimedia.org"),
+    "hackernews": ("news.ycombinator.com",),
+    "bluesky": ("bsky.app",),
+    "medium": ("medium.com",),
+    "substack": ("substack.com",),
 }
+_PLATFORM_HINT_ALIASES: dict[str, tuple[str, ...]] = {
+    "reddit": ("reddit", "subreddit", "r/"),
+    "x": ("twitter", "x", "tweet", "hashtag"),
+    "facebook": ("facebook", "fb"),
+    "instagram": ("instagram", "insta"),
+    "youtube": ("youtube", "yt", "video"),
+    "tiktok": ("tiktok",),
+    "wiki": ("wikipedia", "wiki", "wikidata"),
+    "news_site": ("news site", "news", "editorial", "article", "newspaper"),
+}
+_NEWS_DOMAIN_KEYWORDS = (
+    "news",
+    "post",
+    "times",
+    "herald",
+    "journal",
+    "tribune",
+    "republic",
+    "republica",
+    "khabar",
+    "kantipur",
+    "himalayan",
+    "aljazeera",
+    "bbc",
+    "npr",
+    "livemint",
+    "economictimes",
+)
 
 
 def _utc_now() -> str:
@@ -164,11 +196,153 @@ def init_harvest_tables(topic: str) -> Path:
         )
         conn.execute(
             """
+            CREATE INDEX IF NOT EXISTS idx_discovered_links_domain_platform
+            ON discovered_links(domain, platform)
+            """
+        )
+        conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_link_observations_lookup
             ON link_observations(normalized_url, observed_at DESC)
             """
         )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_link_observations_domain_platform
+            ON link_observations(domain, platform)
+            """
+        )
     return db_path_for_topic(topic)
+
+
+def backfill_platform_labels(topic: str) -> dict[str, int]:
+    """Backfill platform labels for known domains in harvested tables.
+
+    This keeps historical rows useful for downstream routing when platform
+    support expands (for example wiki-specific scraping paths).
+    """
+    init_harvest_tables(topic)
+    updated_discovered = 0
+    updated_observations = 0
+
+    with _connect(topic) as conn:
+        discovered_rows = conn.execute(
+            """
+            SELECT id, url, domain, platform
+            FROM discovered_links
+            """
+        ).fetchall()
+        for row_id, url, domain, platform in discovered_rows:
+            normalized_domain = str(domain or "").lower().strip()
+            candidate_url = (
+                f"https://{normalized_domain}" if normalized_domain else str(url or "")
+            )
+            inferred = infer_platform(candidate_url, None)
+            if not inferred:
+                continue
+            current = str(platform or "").strip().lower()
+            if current == inferred:
+                continue
+            conn.execute(
+                "UPDATE discovered_links SET platform = ? WHERE id = ?",
+                (inferred, int(row_id)),
+            )
+            updated_discovered += 1
+
+        observation_rows = conn.execute(
+            """
+            SELECT id, url, domain, platform
+            FROM link_observations
+            """
+        ).fetchall()
+        for row_id, url, domain, platform in observation_rows:
+            normalized_domain = str(domain or "").lower().strip()
+            candidate_url = (
+                f"https://{normalized_domain}" if normalized_domain else str(url or "")
+            )
+            inferred = infer_platform(candidate_url, None)
+            if not inferred:
+                continue
+            current = str(platform or "").strip().lower()
+            if current == inferred:
+                continue
+            conn.execute(
+                "UPDATE link_observations SET platform = ? WHERE id = ?",
+                (inferred, int(row_id)),
+            )
+            updated_observations += 1
+
+    return {
+        "discovered_links": updated_discovered,
+        "link_observations": updated_observations,
+    }
+
+
+def backfill_published_dates(topic: str) -> dict[str, int]:
+    """Backfill missing published_at values from raw payload JSON."""
+    init_harvest_tables(topic)
+    discovered_updates = 0
+    observation_updates = 0
+
+    with _connect(topic) as conn:
+        discovered_rows = conn.execute(
+            """
+            SELECT id, published_at, raw_payload_json
+            FROM discovered_links
+            WHERE COALESCE(TRIM(published_at), '') = ''
+              AND COALESCE(TRIM(raw_payload_json), '') != ''
+            """
+        ).fetchall()
+        for row_id, published_at, raw_payload_json in discovered_rows:
+            try:
+                payload = json.loads(raw_payload_json) if raw_payload_json else {}
+            except json.JSONDecodeError:
+                payload = {}
+            resolved = _resolve_published_at(published_at, payload)
+            if not resolved:
+                continue
+            conn.execute(
+                "UPDATE discovered_links SET published_at = ? WHERE id = ?",
+                (resolved, int(row_id)),
+            )
+            discovered_updates += 1
+
+        observation_rows = conn.execute(
+            """
+            SELECT id, published_at, raw_payload_json
+            FROM link_observations
+            WHERE COALESCE(TRIM(published_at), '') = ''
+              AND COALESCE(TRIM(raw_payload_json), '') != ''
+            """
+        ).fetchall()
+        for row_id, published_at, raw_payload_json in observation_rows:
+            try:
+                payload = json.loads(raw_payload_json) if raw_payload_json else {}
+            except json.JSONDecodeError:
+                payload = {}
+            resolved = _resolve_published_at(published_at, payload)
+            if not resolved:
+                continue
+            conn.execute(
+                "UPDATE link_observations SET published_at = ? WHERE id = ?",
+                (resolved, int(row_id)),
+            )
+            observation_updates += 1
+
+    return {
+        "discovered_links": discovered_updates,
+        "link_observations": observation_updates,
+    }
+
+
+def backfill_harvest_metadata(topic: str) -> dict[str, dict[str, int]]:
+    """Apply metadata backfills needed by scraping routing logic."""
+    platform_stats = backfill_platform_labels(topic)
+    published_stats = backfill_published_dates(topic)
+    return {
+        "platform": platform_stats,
+        "published_at": published_stats,
+    }
 
 
 def load_research_brief(topic: str) -> ResearchBrief:
@@ -321,15 +495,114 @@ def extract_domain(url: str) -> str:
     return parsed.netloc.lower().removeprefix("www.")
 
 
-def infer_platform(url: str, hinted_platform: str | None = None) -> str:
+def _normalize_platform_hint(hinted_platform: str | None) -> str | None:
     hint = (hinted_platform or "").strip().lower()
-    if hint and hint not in {"web", "generic"}:
+    if not hint or hint in {"web", "generic"}:
+        return None
+
+    if hint in _PLATFORM_DOMAIN_HINTS:
         return hint
+    if hint == "news":
+        return "news_site"
+
+    for canonical, aliases in _PLATFORM_HINT_ALIASES.items():
+        if any(alias in hint for alias in aliases):
+            return canonical
+    return None
+
+
+def _looks_like_news_domain(domain: str) -> bool:
+    lowered = (domain or "").lower()
+    if not lowered:
+        return False
+    # any(token in lowered for token in _NEWS_DOMAIN_KEYWORDS)
+    matches_domain_keywords = any(token in lowered for token in _NEWS_DOMAIN_KEYWORDS)
+
+    # or if ends with or starts with "news" or "post" or "times" etc
+    matches_generic_news_patterns = bool(
+        re.search(r"(news|post|times|herald|journal|tribune|republic|khabar)", lowered)
+    )
+
+    return matches_domain_keywords or matches_generic_news_patterns
+
+
+def _parse_published_at(raw_value: Any) -> str | None:
+    if raw_value is None:
+        return None
+
+    if isinstance(raw_value, (int, float)):
+        if raw_value <= 0:
+            return None
+        try:
+            return datetime.fromtimestamp(float(raw_value), tz=timezone.utc).isoformat()
+        except Exception:
+            return None
+
+    if not isinstance(raw_value, str):
+        return None
+
+    value = raw_value.strip()
+    if not value:
+        return None
+
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).isoformat()
+    except ValueError:
+        pass
+
+    for fmt in (
+        "%b %d, %Y",
+        "%B %d, %Y",
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%d %b %Y",
+        "%d %B %Y",
+    ):
+        try:
+            parsed = datetime.strptime(value, fmt)
+            return parsed.replace(tzinfo=timezone.utc).isoformat()
+        except ValueError:
+            continue
+
+    return None
+
+
+def _resolve_published_at(
+    published_at: str | None,
+    raw_payload: dict[str, Any],
+) -> str | None:
+    parsed = _parse_published_at(published_at)
+    if parsed:
+        return parsed
+
+    for key in (
+        "published_at",
+        "publishedAt",
+        "published",
+        "date",
+        "pubDate",
+        "created_at",
+        "createdAt",
+        "timestamp",
+        "time",
+    ):
+        parsed = _parse_published_at(raw_payload.get(key))
+        if parsed:
+            return parsed
+    return None
+
+
+def infer_platform(url: str, hinted_platform: str | None = None) -> str:
+    normalized_hint = _normalize_platform_hint(hinted_platform)
+    if normalized_hint:
+        return normalized_hint
 
     domain = extract_domain(url)
     for platform, domain_hints in _PLATFORM_DOMAIN_HINTS.items():
         if any(domain.endswith(item) for item in domain_hints):
             return platform
+    if _looks_like_news_domain(domain):
+        return "news_site"
     return "web"
 
 
@@ -516,6 +789,7 @@ class AsyncLinkWriter:
                     )
 
     def _write_one_sync(self, conn: sqlite3.Connection, link: HarvestedLink) -> None:
+        link.published_at = _resolve_published_at(link.published_at, link.raw_payload)
         normalized_url = normalize_url(link.url)
         quality_score, relevance_score, rejection_reason = score_link(link, self._brief)
         unique_id = url_unique_id(normalized_url) if normalized_url else ""

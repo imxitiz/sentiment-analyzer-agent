@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from contextlib import nullcontext
 from dataclasses import asdict
 from typing import Any, Awaitable, Callable
 
@@ -19,17 +20,16 @@ from agents.harvester.models import (
 )
 from agents.services import (
     AsyncLinkWriter,
+    backfill_harvest_metadata,
     build_fallback_harvest_tasks,
     collect_firecrawl_browser_results,
     collect_firecrawl_results,
     collect_serper_results,
-    expand_with_crawlbase,
     finish_harvest_run,
     init_harvest_tables,
     load_research_brief,
     record_orchestrator_event,
     save_pipeline_artifact,
-    select_expansion_seeds,
     start_harvest_run,
 )
 from utils.structured_output import invoke_model_with_structured_recovery
@@ -45,8 +45,8 @@ class HarvesterAgent(BaseAgent):
     _name = "harvester"
     _description = (
         "Harvest high-quality candidate links for a topic using the planner's "
-        "queries, multiple search providers, browser discovery, and expansion "
-        "from promising seed pages. Writes deduplicated links into the topic "
+        "queries, multiple search providers, and browser discovery. "
+        "Writes deduplicated links into the topic "
         "SQLite database."
     )
     _system_prompt_file = "system.txt"
@@ -59,24 +59,52 @@ class HarvesterAgent(BaseAgent):
         topic = message.strip()
         if not topic:
             raise ValueError("HarvesterAgent requires a non-empty topic.")
-        return asyncio.run(self.ainvoke(topic, **kwargs))
+        try:
+            from agents.services import llm_trace_context
+        except Exception:
+            llm_trace_context = None
+
+        context_manager = (
+            llm_trace_context(topic, self._name)
+            if llm_trace_context is not None
+            else nullcontext()
+        )
+        with context_manager:
+            return asyncio.run(self.ainvoke(topic, **kwargs))
 
     async def ainvoke(self, message: str, **kwargs: Any) -> dict[str, Any]:
         topic = message.strip()
         self._checkpoint_topic_input(topic)
         self._checkpoint_agent_status(topic, status="working", mark_started=True)
 
-        brief = load_research_brief(topic)
-        runtime = self._runtime_config()
-        init_harvest_tables(topic)
-        plan = await self._build_harvest_plan(topic, brief, runtime)
-        plan_json = plan.model_dump_json(indent=2)
+        try:
+            from agents.services import llm_trace_context
+        except Exception:
+            llm_trace_context = None
+
+        context_manager = (
+            llm_trace_context(topic, self._name)
+            if llm_trace_context is not None
+            else nullcontext()
+        )
+
+        with context_manager:
+            brief = load_research_brief(topic)
+            runtime = self._runtime_config()
+            init_harvest_tables(topic)
+            backfill_stats = backfill_harvest_metadata(topic)
+            plan = await self._build_harvest_plan(topic, brief, runtime)
+            plan_json = plan.model_dump_json(indent=2)
 
         self._checkpoint_artifact(
             topic=topic,
             artifact_type="harvester_plan",
             value=plan_json,
-            meta={"task_count": len(plan.tasks), "source_order": plan.source_order},
+            meta={
+                "task_count": len(plan.tasks),
+                "source_order": plan.source_order,
+                "platform_backfill": backfill_stats,
+            },
         )
 
         run_id = str(uuid.uuid4())
@@ -123,40 +151,13 @@ class HarvesterAgent(BaseAgent):
             )
             collected_batches.extend(search_results)
 
-            seed_links = select_expansion_seeds(
-                [item for batch in search_results for item in batch.links],
-                brief=brief,
-                runtime=runtime,
-            )
-            if seed_links and not writer.is_full:
-                expansion_result = await expand_with_crawlbase(
-                    seed_links,
-                    brief=brief,
-                    runtime=runtime,
-                    actor=self._name,
-                )
-                collected_batches.append(expansion_result)
-                await writer.submit_many(expansion_result.links)
-                self._checkpoint_artifact(
-                    topic=topic,
-                    artifact_type="harvester_source_summary",
-                    value=json.dumps(
-                        {
-                            "source": expansion_result.source_name,
-                            "count": len(expansion_result.links),
-                            "warnings": expansion_result.warnings,
-                        },
-                        ensure_ascii=False,
-                    ),
-                )
-
             await writer.close()
             stats = writer.stats | {
                 "tasks_executed": len(plan.tasks),
                 "sources_used": list(
                     dict.fromkeys(batch.source_name for batch in collected_batches)
                 ),
-                "seed_links": len(seed_links),
+                "platform_backfill": backfill_stats,
             }
             finish_harvest_run(topic, run_id=run_id, status="completed", stats=stats)
             self._checkpoint_agent_status(
@@ -386,7 +387,7 @@ class HarvesterAgent(BaseAgent):
         return HarvesterRuntimeConfig(
             max_links=_as_int("HARVESTER_MAX_LINKS", 1000),
             max_concurrency=_as_int("HARVESTER_MAX_CONCURRENCY", 8),
-            source_timeout_seconds=_as_int("HARVESTER_SOURCE_TIMEOUT_SECONDS", 120),
+            source_timeout_seconds=_as_int("HARVESTER_SOURCE_TIMEOUT_SECONDS", 300),
             writer_batch_size=_as_int("HARVESTER_WRITER_BATCH_SIZE", 50),
             writer_queue_size=_as_int("HARVESTER_QUEUE_SIZE", 5000),
             per_query_limit=_as_int("HARVESTER_PER_QUERY_LIMIT", 25),
@@ -398,7 +399,7 @@ class HarvesterAgent(BaseAgent):
             enable_browser_discovery=_as_bool(
                 "HARVESTER_ENABLE_BROWSER_DISCOVERY", True
             ),
-            enable_crawlbase=_as_bool("HARVESTER_ENABLE_CRAWLBASE", True),
+            enable_crawlbase=_as_bool("HARVESTER_ENABLE_CRAWLBASE", False),
             enable_serpapi=_as_bool("HARVESTER_ENABLE_SERPAPI", False),
             enable_camoufox=_as_bool("HARVESTER_ENABLE_CAMOUFOX", False),
         )

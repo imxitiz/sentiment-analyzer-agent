@@ -22,6 +22,9 @@ from .harvester_sources import (
 )
 from .harvester_store import (
     AsyncLinkWriter,
+    backfill_harvest_metadata,
+    backfill_published_dates,
+    backfill_platform_labels,
     finish_harvest_run,
     init_harvest_tables,
     load_research_brief,
@@ -73,6 +76,9 @@ from .search_searchengine import search_searchengine
 __all__ = [
     "bootstrap_topic",
     "build_fallback_harvest_tasks",
+    "backfill_harvest_metadata",
+    "backfill_published_dates",
+    "backfill_platform_labels",
     "build_cleaner_store",
     "build_cleaning_runtime_config",
     "build_backend_plan",

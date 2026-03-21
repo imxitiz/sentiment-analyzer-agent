@@ -93,7 +93,7 @@ class HarvesterRuntimeConfig:
 
     max_links: int = 1000
     max_concurrency: int = 8
-    source_timeout_seconds: int = 120
+    source_timeout_seconds: int = 300
     writer_batch_size: int = 50
     writer_queue_size: int = 5000
     per_query_limit: int = 25
@@ -103,6 +103,6 @@ class HarvesterRuntimeConfig:
     enable_serper: bool = True
     enable_firecrawl: bool = True
     enable_browser_discovery: bool = True
-    enable_crawlbase: bool = True
+    enable_crawlbase: bool = False
     enable_serpapi: bool = False
     enable_camoufox: bool = False

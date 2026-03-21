@@ -76,7 +76,7 @@ class EnvConfig:
         # Harvester controls
         "HARVESTER_MAX_LINKS": "1000",
         "HARVESTER_MAX_CONCURRENCY": "8",
-        "HARVESTER_SOURCE_TIMEOUT_SECONDS": "120",
+        "HARVESTER_SOURCE_TIMEOUT_SECONDS": "300",
         "HARVESTER_WRITER_BATCH_SIZE": "50",
         "HARVESTER_QUEUE_SIZE": "5000",
         "HARVESTER_PER_QUERY_LIMIT": "25",
@@ -86,7 +86,7 @@ class EnvConfig:
         "HARVESTER_ENABLE_SERPER": "true",
         "HARVESTER_ENABLE_FIRECRAWL": "true",
         "HARVESTER_ENABLE_BROWSER_DISCOVERY": "true",
-        "HARVESTER_ENABLE_CRAWLBASE": "true",
+        "HARVESTER_ENABLE_CRAWLBASE": "false",
         "HARVESTER_ENABLE_SERPAPI": "false",
         "HARVESTER_ENABLE_CAMOUFOX": "false",
         # Scraper controls

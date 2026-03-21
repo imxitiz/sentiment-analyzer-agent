@@ -1,0 +1,126 @@
+$ uv run python ForTesting/agents/planner_and_harvester.py  --enable-firecrawl --enable-serper --enable-camoufox --enable-browser-discovery --enable-crawlbase --topic "RSP winning on Nepal's HoR National election 2082/2026" --planner-mode reuse --show-output --model minimax-m2.7:cloud --provider ollama
+========================================================================
+Planner + Harvester smoke run complete
+========================================================================
+Topic: RSP winning on Nepal's HoR National election 2082/2026
+Provider: ollama
+Model: minimax-m2.7:cloud
+Planner mode requested: reuse
+Planner mode used: reuse
+Planner executed: False
+Topic DB: data/scrapes/rsp-winning-on-nepals-hor-national-election-20822026.db
+
+Orchestrator run:
+  run_id: 381e1c5e-707d-48fc-a17c-679f8d1f4990
+  status: completed
+  active_agent: orchestrator
+  created_at: 2026-03-20T18:59:54.038455+00:00
+  updated_at: 2026-03-20T19:03:12.048702+00:00
+  topic_db_path: data/scrapes/rsp-winning-on-nepals-hor-national-election-20822026.db
+
+Planner artifact counts:
+  planner_estimated_volume: 1
+  planner_hashtag: 15
+  planner_keyword: 20
+  planner_output: 1
+  planner_platform: 6
+  planner_query: 20
+  planner_raw_output: 1
+  planner_reasoning: 1
+  planner_stop_condition: 1
+  planner_structured_skipped: 1
+  planner_topic_summary: 1
+  planner_web_context: 1
+
+Harvest run:
+  run_id: cb79d518-94c2-48ad-ae79-166ca3966a1a
+  status: completed
+  source_agent: harvester
+  llm_provider: ollama
+  llm_model: minimax-m2.7:cloud
+  created_at: 2026-03-20T19:03:00.624841+00:00
+  updated_at: 2026-03-20T19:03:12.044260+00:00
+  stats:
+    duplicates_seen: 145
+    links_inserted: 319
+    links_updated: 145
+    observations_written: 464
+    queued: 464
+    rejected_invalid: 0
+    rejected_low_quality: 0
+    seed_links: 12
+    sources_used: ['camoufox_browser', 'serper', 'firecrawl_search', 'crawlbase_expand']
+    tasks_executed: 10
+    write_errors: 0
+
+Source summaries (harvester_source_summary artifacts):
+  camoufox_browser: 10
+  serper: 10
+  firecrawl_search: 10
+  crawlbase_expand: 1
+
+Observation rows by source (link_observations):
+  firecrawl_search: 364
+  serper: 100
+
+Validation checks:
+  harvest_run_exists: True
+  harvest_status_completed: True
+  observations_written > 0: True
+  links_inserted > 0 or links_updated > 0: True
+  source_executed[serper] (enabled): True
+  source_executed[firecrawl_search] (enabled): True
+  source_executed[firecrawl_browser] (enabled): False
+  source_executed[camoufox_browser] (enabled): True
+
+Orchestrator output:
+------------------------------------------------------------------------
+# Planner + Harvester Smoke Test
+Topic: RSP winning on Nepal's HoR National election 2082/2026
+Planner mode used: reuse
+
+# Link Harvest Complete
+**Topic**: RSP winning on Nepal's HoR National election 2082/2026
+**Plan Summary**: Fallback harvesting plan for RSP winning on Nepal's HoR National election 2082/2026
+**Tasks Executed**: 10
+**Canonical Links Stored**: 319
+**Updated Existing Links**: 145
+**Observations Logged**: 464
+**Duplicates Seen**: 145
+**Rejected Low Quality**: 0
+**Rejected Invalid**: 0
+## Sources
+- camoufox_browser: 0 candidates (1 warnings)
+- camoufox_browser: 0 candidates (1 warnings)
+- camoufox_browser: 0 candidates (1 warnings)
+- serper: 10 candidates
+- camoufox_browser: 0 candidates (1 warnings)
+- serper: 10 candidates
+- serper: 10 candidates
+- camoufox_browser: 0 candidates (1 warnings)
+- serper: 10 candidates
+- serper: 10 candidates
+- camoufox_browser: 0 candidates (1 warnings)
+- serper: 10 candidates
+- firecrawl_search: 32 candidates
+- camoufox_browser: 0 candidates (1 warnings)
+- firecrawl_search: 50 candidates
+- serper: 10 candidates
+- camoufox_browser: 0 candidates (1 warnings)
+- firecrawl_search: 50 candidates
+- serper: 10 candidates
+- camoufox_browser: 0 candidates (1 warnings)
+- serper: 10 candidates
+- firecrawl_search: 28 candidates
+- camoufox_browser: 0 candidates (1 warnings)
+- firecrawl_search: 50 candidates
+- serper: 10 candidates
+- firecrawl_search: 25 candidates
+- firecrawl_search: 25 candidates
+- firecrawl_search: 37 candidates
+- firecrawl_search: 17 candidates
+- firecrawl_search: 50 candidates
+- crawlbase_expand: 0 candidates (1 warnings)
+------------------------------------------------------------------------
+
+Result: FAIL (see checks above)

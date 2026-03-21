@@ -315,17 +315,35 @@ async def collect_camoufox_browser_results(
     configuration.  We simply delegate and translate the result into
     ``HarvestSourceResult``.
     """
-    try:
-        from utils.camoufox import camoufox_fetch_anchors
+    from utils.camoufox import camoufox_fetch_anchors
 
-        payload = camoufox_fetch_anchors(task.query, max_links=runtime.per_query_limit)
-        anchors = payload.get("anchors", []) if isinstance(payload, dict) else []
-    except Exception as exc:
+    anchors: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    max_links = min(runtime.per_query_limit, max(1, task.target_results))
+    for search_url in _browser_search_urls(task)[:2]:
+        try:
+            payload = await asyncio.to_thread(
+                camoufox_fetch_anchors,
+                search_url,
+                max_links=max_links,
+                timeout_seconds=max(60.0, float(runtime.source_timeout_seconds)),
+                headless=True,
+            )
+            result_anchors = payload.get("anchors", []) if isinstance(payload, dict) else []
+            for item in result_anchors:
+                item_copy = dict(item)
+                item_copy.setdefault("search_page", search_url)
+                anchors.append(item_copy)
+        except Exception as exc:
+            warnings.append(f"Camoufox error: {exc}")
+
+    if not anchors and warnings:
         return HarvestSourceResult(
             source_name="camoufox_browser",
             source_type="browser",
-            warnings=[f"Camoufox error: {exc}"],
+            warnings=warnings,
         )
+
     links: list[HarvestedLink] = []
     for index, item in enumerate(anchors, start=1):
         url = item.get("href", "")
@@ -344,7 +362,10 @@ async def collect_camoufox_browser_results(
                 domain=extract_domain(url),
                 quality_signal=0.05,
                 relevance_signal=0.05,
-                metadata={"camoufox": True},
+                metadata={
+                    "camoufox": True,
+                    "search_page": item.get("search_page", ""),
+                },
                 raw_payload=item,
             )
         )
@@ -352,20 +373,33 @@ async def collect_camoufox_browser_results(
         source_name="camoufox_browser",
         source_type="browser",
         links=links,
+        warnings=warnings,
     )
 
 
 def _browser_search_urls(task: HarvestTaskPlan) -> list[str]:
     encoded = quote_plus(task.query)
     platform = task.platform_hint.lower()
-    if platform == "reddit":
+    if "reddit" in platform:
         return [f"https://www.reddit.com/search/?q={encoded}"]
-    if platform in {"news", "web"}:
+    if "youtube" in platform:
+        return [
+            f"https://www.youtube.com/results?search_query={encoded}",
+            f"https://duckduckgo.com/?q=site%3Ayoutube.com+{encoded}",
+        ]
+    if "facebook" in platform:
+        return [f"https://duckduckgo.com/?q=site%3Afacebook.com+{encoded}"]
+    if "instagram" in platform:
+        return [f"https://duckduckgo.com/?q=site%3Ainstagram.com+{encoded}"]
+    if "news" in platform or platform in {"news", "web"}:
         return [
             f"https://news.google.com/search?q={encoded}",
             f"https://duckduckgo.com/?q={encoded}",
         ]
-    return [f"https://duckduckgo.com/?q={encoded}"]
+    return [
+        f"https://duckduckgo.com/?q={encoded}",
+        f"https://www.bing.com/search?q={encoded}",
+    ]
 
 
 async def collect_firecrawl_browser_results(
