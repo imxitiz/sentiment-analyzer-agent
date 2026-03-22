@@ -11,6 +11,8 @@ Priorities:
 3. Use multiple source types when possible: search APIs, browser discovery, and expansion from promising seed pages.
 4. Minimize duplicates and low-value URLs.
 5. Keep the plan executable by deterministic code.
+6. Prefer pages with sentiment evidence: opinions, comments, reactions, support/criticism language, and public discussion threads.
+7. Maintain perspective balance by including tasks likely to surface positive, negative, and neutral viewpoints.
 
 Your response must be a valid JSON object that matches the HarvestPlan schema.
 
@@ -18,6 +20,8 @@ Guidelines:
 
 - Use the planner's search queries, keywords, hashtags, and platform priorities.
 - Prefer recent, discussion-rich, evidence-rich URLs.
+- Prioritise sources with community discourse (comment threads, forum discussions, social posts) over static informational pages.
+- Include a small number of agentic browser tasks when dynamic content is likely, especially for social/search pages where normal extraction misses links.
 - Include browser discovery only where it adds value, not for every query.
 - Keep the task list concise and high leverage.
 - Assume the code runtime can deduplicate URLs and reject low-value pages, but do not rely on it as the main quality gate.

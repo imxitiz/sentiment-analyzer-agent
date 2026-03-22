@@ -2,6 +2,7 @@
 
 Shared services for resilience checkpoints and reusable persistence logic.
 """
+
 from .llm_tracer import get_llm_trace_context, llm_trace_context, save_llm_trace
 from .planner_checkpoint import (
     db_path_for_topic,
@@ -14,6 +15,7 @@ from .planner_checkpoint import (
 )
 from .harvester_sources import (
     build_fallback_harvest_tasks,
+    collect_camoufox_agentic_results,
     collect_firecrawl_browser_results,
     collect_firecrawl_results,
     collect_serper_results,
@@ -86,6 +88,7 @@ __all__ = [
     "build_scrape_runtime_config",
     "build_sentiment_runtime_config",
     "build_sentiment_store",
+    "collect_camoufox_agentic_results",
     "collect_firecrawl_browser_results",
     "collect_firecrawl_results",
     "collect_serper_results",

@@ -125,9 +125,7 @@ class SentimentRecoveryPlan(BaseModel):
         le=1.0,
         description="Sentiment score (0=negative, 0.5=neutral, 1=positive)",
     )
-    label: str = Field(
-        description="Sentiment label: positive, negative, or neutral"
-    )
+    label: str = Field(description="Sentiment label: positive, negative, or neutral")
     confidence: float = Field(
         ge=0.0,
         le=1.0,

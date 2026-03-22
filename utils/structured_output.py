@@ -55,7 +55,7 @@ def _extract_json_candidates(text: str) -> list[str]:
         return []
 
     candidates: list[str] = [raw]
-    
+
     fenced = re.findall(r"```(?:json)?\s*([\s\S]*?)\s*```", raw)
     for block in fenced:
         block = block.strip()
@@ -204,6 +204,7 @@ def invoke_model_with_structured_recovery(
     schema_model: type[TModel],
     messages: list,
     supports_structured: bool,
+    structured_invoke_kwargs: dict[str, Any] | None = None,
     fallback_text_getter: FallbackTextGetter,
     normalize_payload: NormalizePayloadFn | None = None,
     repair_prompt_builder: RepairPromptBuilder | None = None,
@@ -240,9 +241,12 @@ def invoke_model_with_structured_recovery(
                     messages,
                     schema_model=schema_model,
                     call_kind="structured_invoke",
+                    structured_kwargs=structured_invoke_kwargs,
                 )
             else:
-                structured_llm = llm_adapter.chat_model.with_structured_output(schema_model)
+                structured_llm = llm_adapter.chat_model.with_structured_output(
+                    schema_model
+                )
                 structured_result = structured_llm.invoke(messages)
             if isinstance(structured_result, schema_model):
                 model_value = structured_result
@@ -268,6 +272,35 @@ def invoke_model_with_structured_recovery(
                 reason="structured_invoke_failed",
                 meta={"schema": schema_model.__name__, "error": structured_error},
             )
+
+            # Some providers include usable JSON completions in parse-error text.
+            # Attempt to recover that payload before spending another model call.
+            structured_error_model, structured_error_parse_error = (
+                _parse_model_from_text(
+                    structured_error,
+                    schema_model=schema_model,
+                    normalize_payload=normalize_payload,
+                )
+            )
+            if structured_error_model is not None:
+                output = structured_error_model.model_dump_json(indent=2)
+                _log.success(
+                    "Structured recovery parsed invocation error payload",
+                    action="structured_recovery_done",
+                    meta={
+                        "schema": schema_model.__name__,
+                        "mode": "structured_error_parsed",
+                    },
+                )
+                return StructuredRecoveryResult(
+                    value=structured_error_model,
+                    mode="structured_error_parsed",
+                    output_text=output,
+                    raw_text=structured_error,
+                    structured_error=structured_error,
+                    structured_skipped=structured_skipped,
+                    parse_error=structured_error_parse_error,
+                )
     else:
         structured_error = None
         structured_skipped = True

@@ -191,8 +191,7 @@ def resolve_provider(provider: str) -> str:
     if canonical not in SENTIMENT_MODELS:
         available = list(SENTIMENT_MODELS.keys())
         raise ValueError(
-            f"Unknown sentiment provider {provider!r}. "
-            f"Available providers: {available}"
+            f"Unknown sentiment provider {provider!r}. Available providers: {available}"
         )
 
     return canonical

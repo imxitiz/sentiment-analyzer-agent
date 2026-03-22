@@ -198,6 +198,7 @@ class PlannerAgent(BaseAgent):
                     schema_model=ResearchPlan,
                     messages=messages,
                     supports_structured=self._llm_adapter.supports_structured_output,
+                    structured_invoke_kwargs=self._structured_invoke_kwargs(),
                     fallback_text_getter=_fallback_text_getter,
                     normalize_payload=self._normalize_plan_payload,
                     repair_prompt_builder=lambda raw: self._build_plan_repair_prompt(
@@ -499,11 +500,21 @@ class PlannerAgent(BaseAgent):
             messages,
             schema_model=ResearchPlan,
             call_kind="planner_structured_invoke",
+            structured_kwargs=self._structured_invoke_kwargs(),
         )
         if isinstance(result, ResearchPlan):
             return result
         # Handle dict response from some providers
         return ResearchPlan.model_validate(result)
+
+    def _structured_invoke_kwargs(self) -> dict[str, Any]:
+        """Provider-tuned structured output kwargs for planner schema calls."""
+        provider = str(getattr(self._llm_adapter, "_provider", "")).lower()
+        if provider == "ollama":
+            return {"method": "json_schema"}
+        if provider in {"google", "openai"}:
+            return {"method": "json_schema", "strict": True}
+        return {}
 
     def _gather_web_context(self, topic: str) -> str:
         """Get a quick search queries to gather search snippets deterministically,
@@ -543,13 +554,7 @@ class PlannerAgent(BaseAgent):
 
             queries = str(content)
 
-            list_of_queries: list[str] = []
-            if isinstance(queries, str):
-                list_of_queries = [
-                    q.strip() for q in re.split(r"[,;\s]+", queries) if q.strip()
-                ]
-            else:
-                list_of_queries = self._flatten_string_values(queries)
+            list_of_queries = self._extract_web_context_queries(str(queries), topic)
             queries = list_of_queries[:5]  # limit to top 5 queries
 
             snippet_payloads: list[str] = []
@@ -590,6 +595,54 @@ class PlannerAgent(BaseAgent):
                 reason=type(exc).__name__,
             )
             return ""
+
+    @staticmethod
+    def _extract_web_context_queries(raw_text: str, topic: str) -> list[str]:
+        """Extract query phrases robustly from LLM text.
+
+        Prevents accidental token splitting (for example "Here are useful...")
+        from becoming junk one-word search queries.
+        """
+        raw = str(raw_text or "").strip()
+        if not raw:
+            return [topic]
+
+        # Prefer phrase separators; never split on plain whitespace.
+        candidates = [
+            item.strip(" \t\n\r-•*\"'`")
+            for item in re.split(r"[,;\n]+", raw)
+            if item.strip()
+        ]
+
+        cleaned: list[str] = []
+        rejected_singletons = {
+            "here",
+            "are",
+            "useful",
+            "search",
+            "queries",
+            "query",
+        }
+        for candidate in candidates:
+            candidate = re.sub(r"^\d+[\.)]\s*", "", candidate).strip()
+            if not candidate:
+                continue
+            lower = candidate.lower()
+            if lower in rejected_singletons:
+                continue
+            if len(candidate) < 8:
+                continue
+            cleaned.append(candidate)
+
+        deduped = list(dict.fromkeys(cleaned))
+        if deduped:
+            return deduped
+
+        return [
+            topic,
+            f"{topic} public sentiment",
+            f"{topic} Nepal reactions",
+        ]
 
     # ── Demo mode ────────────────────────────────────────────────────
 

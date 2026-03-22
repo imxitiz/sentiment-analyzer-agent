@@ -90,16 +90,44 @@ class DummySentimentAdapter(BaseSentimentAdapter):
 
         # Positive keywords
         positive_words = [
-            "love", "great", "amazing", "excellent", "good", "wonderful",
-            "fantastic", "awesome", "happy", "best", "perfect", "beautiful",
-            "brilliant", "outstanding", "superb", "delightful", "joy",
+            "love",
+            "great",
+            "amazing",
+            "excellent",
+            "good",
+            "wonderful",
+            "fantastic",
+            "awesome",
+            "happy",
+            "best",
+            "perfect",
+            "beautiful",
+            "brilliant",
+            "outstanding",
+            "superb",
+            "delightful",
+            "joy",
         ]
 
         # Negative keywords
         negative_words = [
-            "hate", "terrible", "awful", "bad", "worst", "horrible",
-            "disgusting", "poor", "disappointing", "sad", "angry", "ugly",
-            "boring", "annoying", "frustrating", "useless", "broken",
+            "hate",
+            "terrible",
+            "awful",
+            "bad",
+            "worst",
+            "horrible",
+            "disgusting",
+            "poor",
+            "disappointing",
+            "sad",
+            "angry",
+            "ugly",
+            "boring",
+            "annoying",
+            "frustrating",
+            "useless",
+            "broken",
         ]
 
         # Count matches
@@ -124,7 +152,11 @@ class DummySentimentAdapter(BaseSentimentAdapter):
             "score": score,
             "label": label,
             "confidence": 0.8,  # Dummy confidence
-            "raw": {"text": text, "positive_count": positive_count, "negative_count": negative_count},
+            "raw": {
+                "text": text,
+                "positive_count": positive_count,
+                "negative_count": negative_count,
+            },
         }
 
     def _predict_batch(self, texts: list[str]) -> list[dict[str, Any]]:

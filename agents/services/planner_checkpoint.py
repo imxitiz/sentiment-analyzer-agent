@@ -24,6 +24,7 @@ logger = get_logger("agents.services.planner_checkpoint")
 
 _DB_DIR = Path("data/scrapes")
 
+
 def _slugify(text: str) -> str:
     slug = text.lower().strip()
     slug = re.sub(r"[^\w\s-]", "", slug)

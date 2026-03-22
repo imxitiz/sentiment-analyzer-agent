@@ -82,7 +82,20 @@ class OrchestratorAgent(BaseAgent):
             from agents.scraper.agent import ScraperAgent
             from agents.sentiment.agent import SentimentAnalyzerAgent
 
-            forwarded = {k: v for k, v in kwargs.items() if k in ("llm_provider",)}
+            forwarded = {
+                k: v
+                for k, v in kwargs.items()
+                if k
+                in (
+                    "llm_provider",
+                    "model",
+                    "llm_model",
+                    "temperature",
+                    "max_tokens",
+                    "cli_path",
+                    "cli_url",
+                )
+            }
             sub_agents = [
                 PlannerAgent(**forwarded),
                 HarvesterAgent(**forwarded),

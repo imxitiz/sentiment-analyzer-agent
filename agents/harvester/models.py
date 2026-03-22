@@ -106,3 +106,8 @@ class HarvesterRuntimeConfig:
     enable_crawlbase: bool = False
     enable_serpapi: bool = False
     enable_camoufox: bool = False
+    enable_camoufox_agentic: bool = True
+    camoufox_agentic_max_seed_pages: int = 10
+    camoufox_agentic_max_hops: int = 2
+    camoufox_agentic_links_per_page: int = 25
+    camoufox_agentic_extract_chars: int = 1200

@@ -148,6 +148,7 @@ def _parse_args() -> argparse.Namespace:
     )
     return parser.parse_args()
 
+
 def _resolve_topic(args: argparse.Namespace) -> str:
     if args.topic:
         return args.topic.strip()

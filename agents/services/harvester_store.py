@@ -53,6 +53,58 @@ _LOW_VALUE_PATTERNS = (
     "/intent/",
     "/sharer",
 )
+_LOW_VALUE_DOMAINS = (
+    "duckduckgo.com",
+    "bing.com",
+    "search.yahoo.com",
+    "accounts.google.com",
+    "news.google.com",
+)
+_LOW_SIGNAL_QUERY_KEYS = {
+    "ia",
+    "iax",
+    "iaxm",
+    "assist",
+    "ceid",
+    "hl",
+    "gl",
+}
+_LOW_SIGNAL_TITLES = {
+    "all",
+    "images",
+    "videos",
+    "news",
+    "maps",
+    "home",
+    "sign in",
+    "search assist",
+    "duck.ai",
+    "learn more",
+}
+_SENTIMENT_EVIDENCE_TERMS = (
+    "opinion",
+    "reaction",
+    "react",
+    "debate",
+    "support",
+    "oppose",
+    "critic",
+    "criticism",
+    "praise",
+    "concern",
+    "comment",
+    "comments",
+    "discussion",
+    "thread",
+    "public sentiment",
+)
+_NEUTRAL_INFO_TERMS = (
+    "date",
+    "calendar",
+    "time and date",
+    "holiday list",
+    "office holidays",
+)
 _PLATFORM_DOMAIN_HINTS: dict[str, tuple[str, ...]] = {
     "reddit": ("reddit.com",),
     "x": ("x.com", "twitter.com"),
@@ -575,34 +627,66 @@ def _resolve_published_at(
     if parsed:
         return parsed
 
-    for key in (
+    primary_keys = (
         "published_at",
         "publishedAt",
         "published",
         "date",
+        "datetime",
         "pubDate",
+        "publication_date",
+        "published_date",
+        "article_date",
         "created_at",
         "createdAt",
+        "created",
         "timestamp",
+        "unix_timestamp",
+        "epoch",
         "time",
-    ):
+    )
+
+    for key in primary_keys:
         parsed = _parse_published_at(raw_payload.get(key))
         if parsed:
             return parsed
+
+    stack: list[Any] = [raw_payload]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, dict):
+            for key, value in current.items():
+                key_l = str(key).lower()
+                if any(
+                    token in key_l
+                    for token in ("date", "time", "published", "created", "timestamp")
+                ):
+                    parsed = _parse_published_at(value)
+                    if parsed:
+                        return parsed
+                if isinstance(value, (dict, list)):
+                    stack.append(value)
+        elif isinstance(current, list):
+            for item in current:
+                if isinstance(item, (dict, list)):
+                    stack.append(item)
     return None
 
 
 def infer_platform(url: str, hinted_platform: str | None = None) -> str:
-    normalized_hint = _normalize_platform_hint(hinted_platform)
-    if normalized_hint:
-        return normalized_hint
-
     domain = extract_domain(url)
     for platform, domain_hints in _PLATFORM_DOMAIN_HINTS.items():
         if any(domain.endswith(item) for item in domain_hints):
             return platform
     if _looks_like_news_domain(domain):
         return "news_site"
+
+    # Use planner/LLM hints only as a last resort when domain routing cannot
+    # classify the URL.
+    normalized_hint = _normalize_platform_hint(hinted_platform)
+    if normalized_hint:
+        return normalized_hint
+
     return "web"
 
 
@@ -611,6 +695,25 @@ def is_probably_low_value_url(url: str) -> bool:
     if not normalized:
         return True
     lowered = normalized.lower()
+    parsed = urlparse(normalized)
+    domain = (parsed.netloc or "").lower()
+
+    if any(
+        domain == item or domain.endswith(f".{item}") for item in _LOW_VALUE_DOMAINS
+    ):
+        return True
+
+    if any(
+        pattern in parsed.path.lower() for pattern in ("/search", "/topics/", "/home")
+    ):
+        return True
+
+    query_keys = {
+        key.lower() for key, _ in parse_qsl(parsed.query, keep_blank_values=True)
+    }
+    if query_keys.intersection(_LOW_SIGNAL_QUERY_KEYS):
+        return True
+
     if any(pattern in lowered for pattern in _LOW_VALUE_PATTERNS):
         return True
     if lowered.endswith((".jpg", ".jpeg", ".png", ".gif", ".svg", ".css", ".js")):
@@ -638,6 +741,10 @@ def score_link(
         ]
         if part
     ).lower()
+    cleaned_title = (link.title or "").strip().lower()
+    if cleaned_title in _LOW_SIGNAL_TITLES:
+        return 0.05, 0.05, "navigation_link"
+
     terms = {
         item.lower().strip("# ")
         for item in [brief.topic, *brief.keywords[:25], *brief.hashtags[:15]]
@@ -645,7 +752,16 @@ def score_link(
     }
 
     matched_terms = sum(1 for term in terms if term and term in text)
-    relevance = min(1.0, 0.15 + matched_terms * 0.12 + max(0.0, link.relevance_signal))
+    evidence_matches = sum(1 for term in _SENTIMENT_EVIDENCE_TERMS if term in text)
+    neutral_matches = sum(1 for term in _NEUTRAL_INFO_TERMS if term in text)
+
+    relevance = min(
+        1.0,
+        0.15
+        + matched_terms * 0.12
+        + evidence_matches * 0.04
+        + max(0.0, link.relevance_signal),
+    )
 
     quality = 0.2
     if link.title:
@@ -658,8 +774,18 @@ def score_link(
         quality += 0.05
     if link.position is not None:
         quality += max(0.0, (20 - min(link.position, 20)) * 0.01)
-    if infer_platform(link.url, link.platform) != "web":
+    inferred_platform = infer_platform(link.url, None)
+    if inferred_platform != "web":
         quality += 0.08
+    quality += min(0.18, evidence_matches * 0.03)
+    quality -= min(0.2, neutral_matches * 0.05)
+
+    # Camoufox browser discovery can emit search/navigation links; down-rank
+    # low-evidence web pages aggressively so they don't dominate the queue.
+    if link.source_name in {"camoufox_browser", "camoufox_agentic"}:
+        if inferred_platform == "web" and evidence_matches == 0:
+            quality -= 0.25
+
     quality += max(0.0, link.quality_signal)
     quality += relevance * 0.35
     quality = min(1.0, max(0.0, quality))
@@ -794,7 +920,7 @@ class AsyncLinkWriter:
         quality_score, relevance_score, rejection_reason = score_link(link, self._brief)
         unique_id = url_unique_id(normalized_url) if normalized_url else ""
         domain = extract_domain(normalized_url) if normalized_url else ""
-        platform = infer_platform(normalized_url or link.url, link.platform)
+        platform = infer_platform(normalized_url or link.url, None)
         observed_at = _utc_now()
         accepted = bool(
             normalized_url

@@ -105,6 +105,8 @@ def build_fallback_harvest_tasks(
     # camoufox can function locally or via CLI, endpoint not strictly required
     if runtime.enable_camoufox:
         source_names.append("camoufox_browser")
+        if runtime.enable_camoufox_agentic:
+            source_names.append("camoufox_agentic")
 
     for query, platform_hint in _build_platform_queries(brief)[:10]:
         tasks.append(
@@ -329,7 +331,9 @@ async def collect_camoufox_browser_results(
                 timeout_seconds=max(60.0, float(runtime.source_timeout_seconds)),
                 headless=True,
             )
-            result_anchors = payload.get("anchors", []) if isinstance(payload, dict) else []
+            result_anchors = (
+                payload.get("anchors", []) if isinstance(payload, dict) else []
+            )
             for item in result_anchors:
                 item_copy = dict(item)
                 item_copy.setdefault("search_page", search_url)
@@ -345,32 +349,366 @@ async def collect_camoufox_browser_results(
         )
 
     links: list[HarvestedLink] = []
+    seen_urls: set[str] = set()
     for index, item in enumerate(anchors, start=1):
         url = item.get("href", "")
-        if not normalize_url(url):
+        normalized_url = normalize_url(url)
+        if not normalized_url:
             continue
-        links.append(
-            HarvestedLink(
-                url=url,
-                title=item.get("title", "") or item.get("text", ""),
-                description="Discovered via Camoufox browser",
-                platform=infer_platform(url, task.platform_hint),
-                source_name="camoufox_browser",
-                source_type="browser",
-                discovery_query=task.query,
-                position=index,
-                domain=extract_domain(url),
-                quality_signal=0.05,
-                relevance_signal=0.05,
-                metadata={
-                    "camoufox": True,
-                    "search_page": item.get("search_page", ""),
-                },
-                raw_payload=item,
-            )
+        if normalized_url in seen_urls:
+            continue
+        seen_urls.add(normalized_url)
+        domain = extract_domain(url)
+        title = item.get("title", "") or item.get("text", "")
+        anchor_text = item.get("text", "")
+        if _is_search_engine_domain(domain):
+            continue
+        if _is_low_signal_browser_link(href=url, title=title, text=anchor_text):
+            continue
+
+        candidate = HarvestedLink(
+            url=normalized_url,
+            title=title,
+            description="Discovered via Camoufox browser",
+            platform=infer_platform(normalized_url, task.platform_hint),
+            source_name="camoufox_browser",
+            source_type="browser",
+            discovery_query=task.query,
+            position=index,
+            domain=domain,
+            quality_signal=0.03,
+            relevance_signal=_sentiment_evidence_bonus(title=title, text=anchor_text),
+            metadata={
+                "camoufox": True,
+                "search_page": item.get("search_page", ""),
+                "anchor_text": anchor_text,
+            },
+            raw_payload=item,
         )
+        quality, _, rejection = score_link(candidate, brief)
+        if rejection:
+            continue
+        if quality < max(runtime.min_quality_score, 0.5):
+            continue
+        links.append(candidate)
     return HarvestSourceResult(
         source_name="camoufox_browser",
+        source_type="browser",
+        links=links,
+        warnings=warnings,
+    )
+
+
+def _is_search_engine_domain(domain: str) -> bool:
+    lowered = (domain or "").lower()
+    return any(
+        lowered.endswith(host)
+        for host in (
+            "google.com",
+            "google.com.np",
+            "accounts.google.com",
+            "duckduckgo.com",
+            "bing.com",
+            "yahoo.com",
+            "news.google.com",
+        )
+    )
+
+
+def _is_navigable_href(href: str) -> bool:
+    value = (href or "").strip().lower()
+    if not value:
+        return False
+    if value.startswith(("mailto:", "tel:", "javascript:", "#")):
+        return False
+    return bool(normalize_url(href))
+
+
+def _is_low_signal_browser_link(*, href: str, title: str, text: str) -> bool:
+    lowered_href = (href or "").lower()
+    lowered_title = (title or "").strip().lower()
+    lowered_text = (text or "").strip().lower()
+
+    if any(token in lowered_href for token in ("&ia=", "&iax=", "&iaxm=", "assist=")):
+        return True
+    if "?q=" in lowered_href and any(
+        host in lowered_href
+        for host in ("duckduckgo.com", "google.com/search", "bing.com/search")
+    ):
+        return True
+    if any(
+        token in lowered_href
+        for token in ("/servicelogin", "/signin", "/sign-in", "/accounts/")
+    ):
+        return True
+    if lowered_title in {"all", "images", "videos", "news", "maps", "home", "sign in"}:
+        return True
+    if lowered_text in {"all", "images", "videos", "news", "maps", "home", "sign in"}:
+        return True
+    return False
+
+
+def _sentiment_evidence_bonus(*, title: str, text: str) -> float:
+    combined = f"{title} {text}".lower()
+    evidence_terms = (
+        "opinion",
+        "reaction",
+        "debate",
+        "support",
+        "oppose",
+        "concern",
+        "praise",
+        "critic",
+        "comment",
+        "discussion",
+        "review",
+    )
+    matches = sum(1 for term in evidence_terms if term in combined)
+    return min(0.2, matches * 0.02)
+
+
+async def collect_camoufox_agentic_results(
+    task: HarvestTaskPlan,
+    *,
+    brief: ResearchBrief,
+    runtime: HarvesterRuntimeConfig,
+    actor: str,
+) -> HarvestSourceResult:
+    """Collect links using a stateful Camoufox browser workflow.
+
+    This collector simulates multi-step browsing: open rendered search pages,
+    rank candidate links, navigate into top seeds, and optionally traverse one
+    additional hop to discover discussion-rich pages.
+    """
+    from utils.camoufox import (
+        camoufox_close_browser,
+        camoufox_extract_links,
+        camoufox_extract_text,
+        camoufox_is_available,
+        camoufox_navigate,
+        camoufox_start_browser,
+    )
+
+    log = context_logger(
+        "agents.services.harvester_sources.camoufox_agentic",
+        actor=actor,
+        phase="HARVESTER",
+        topic=brief.topic,
+    )
+
+    if not camoufox_is_available():
+        return HarvestSourceResult(
+            source_name="camoufox_agentic",
+            source_type="browser",
+            warnings=["Camoufox is not available in this environment."],
+        )
+
+    links: list[HarvestedLink] = []
+    warnings: list[str] = []
+    max_links_per_page = max(5, runtime.camoufox_agentic_links_per_page)
+    max_seed_pages = max(1, runtime.camoufox_agentic_max_seed_pages)
+    max_hops = max(1, runtime.camoufox_agentic_max_hops)
+
+    def _normalize_candidates(anchors: list[dict[str, Any]]) -> list[HarvestedLink]:
+        candidates: list[HarvestedLink] = []
+        for index, item in enumerate(anchors, start=1):
+            url = str(item.get("href", "")).strip()
+            normalized = normalize_url(url)
+            if not normalized:
+                continue
+            domain = extract_domain(normalized)
+            if _is_search_engine_domain(domain):
+                continue
+            title = str(item.get("title", "") or item.get("text", ""))
+            anchor_text = str(item.get("text", ""))
+            if _is_low_signal_browser_link(
+                href=normalized, title=title, text=anchor_text
+            ):
+                continue
+            candidates.append(
+                HarvestedLink(
+                    url=normalized,
+                    title=title,
+                    description=anchor_text,
+                    platform=infer_platform(normalized, task.platform_hint),
+                    source_name="camoufox_agentic",
+                    source_type="browser",
+                    discovery_query=task.query,
+                    position=index,
+                    domain=domain,
+                    quality_signal=0.09,
+                    relevance_signal=0.08,
+                    metadata={"hop": 0, "anchor_text": anchor_text},
+                    raw_payload=dict(item),
+                )
+            )
+        ranked: list[tuple[float, HarvestedLink]] = []
+        for candidate in candidates:
+            quality, relevance, rejection = score_link(candidate, brief)
+            if rejection:
+                continue
+            ranked.append((quality + relevance, candidate))
+        ranked.sort(key=lambda item: item[0], reverse=True)
+        return [item[1] for item in ranked[:max_seed_pages]]
+
+    def _run_session_sync() -> tuple[list[HarvestedLink], list[str]]:
+        local_links: list[HarvestedLink] = []
+        local_warnings: list[str] = []
+        visited: set[str] = set()
+        session_id = ""
+
+        try:
+            session = camoufox_start_browser(
+                headless=True,
+                main_world_eval=True,
+                timeout_seconds=max(60.0, float(runtime.source_timeout_seconds)),
+            )
+            session_id = str(session.get("session_id", ""))
+            if not session_id:
+                return local_links, ["Camoufox session did not return a session_id."]
+
+            seed_candidates: list[HarvestedLink] = []
+            for search_url in _browser_search_urls(task)[:3]:
+                try:
+                    camoufox_navigate(
+                        session_id,
+                        search_url,
+                        timeout_seconds=max(
+                            45.0, float(runtime.source_timeout_seconds)
+                        ),
+                    )
+                    extracted = camoufox_extract_links(
+                        session_id,
+                        max_links=max_links_per_page,
+                    )
+                    anchors = extracted.get("anchors", [])
+                    seed_candidates.extend(_normalize_candidates(anchors))
+                except Exception as exc:
+                    local_warnings.append(
+                        f"Search navigation failed for {search_url}: {exc}"
+                    )
+
+            frontier: list[str] = []
+            for candidate in seed_candidates:
+                normalized = normalize_url(candidate.url)
+                if not normalized or normalized in visited:
+                    continue
+                visited.add(normalized)
+                frontier.append(normalized)
+
+            for hop in range(1, max_hops + 1):
+                if not frontier:
+                    break
+                next_frontier: list[str] = []
+                for seed_url in frontier[:max_seed_pages]:
+                    try:
+                        camoufox_navigate(
+                            session_id,
+                            seed_url,
+                            timeout_seconds=max(
+                                45.0, float(runtime.source_timeout_seconds)
+                            ),
+                        )
+                        page_text = camoufox_extract_text(
+                            session_id,
+                            selector="body",
+                            max_chars=max(300, runtime.camoufox_agentic_extract_chars),
+                        )
+                        title = str(page_text.get("title", ""))
+                        text = str(page_text.get("text", ""))
+                        if _is_low_signal_browser_link(
+                            href=seed_url, title=title, text=text[:120]
+                        ):
+                            continue
+
+                        link = HarvestedLink(
+                            url=seed_url,
+                            title=title,
+                            description=text[:220],
+                            platform=infer_platform(seed_url, task.platform_hint),
+                            source_name="camoufox_agentic",
+                            source_type="browser",
+                            discovery_query=task.query,
+                            domain=extract_domain(seed_url),
+                            quality_signal=0.1 + max(0.0, 0.03 * (max_hops - hop)),
+                            relevance_signal=0.08
+                            + _sentiment_evidence_bonus(title=title, text=text),
+                            metadata={"hop": hop},
+                            raw_payload={
+                                "title": title,
+                                "text_preview": text[:500],
+                                "hop": hop,
+                            },
+                        )
+                        quality, relevance, rejection = score_link(link, brief)
+                        if rejection:
+                            continue
+                        if quality < max(runtime.min_quality_score, 0.5):
+                            continue
+                        if relevance < 0.35:
+                            continue
+                        local_links.append(link)
+
+                        if hop >= max_hops:
+                            continue
+
+                        outbound = camoufox_extract_links(
+                            session_id,
+                            max_links=max(10, max_links_per_page // 2),
+                        )
+                        for item in outbound.get("anchors", []):
+                            href = str(item.get("href", "")).strip()
+                            if not _is_navigable_href(href):
+                                continue
+                            normalized = normalize_url(href)
+                            if not normalized or normalized in visited:
+                                continue
+                            domain = extract_domain(normalized)
+                            title_hint = str(
+                                item.get("title", "") or item.get("text", "")
+                            )
+                            text_hint = str(item.get("text", ""))
+                            if _is_search_engine_domain(domain):
+                                continue
+                            if _is_low_signal_browser_link(
+                                href=normalized,
+                                title=title_hint,
+                                text=text_hint,
+                            ):
+                                continue
+                            visited.add(normalized)
+                            next_frontier.append(normalized)
+                    except Exception as exc:
+                        local_warnings.append(
+                            f"Seed navigation failed for {seed_url}: {exc}"
+                        )
+
+                frontier = next_frontier
+
+            if not local_links:
+                local_warnings.append(
+                    "Camoufox agentic run produced no navigable candidates."
+                )
+            return local_links, local_warnings
+        finally:
+            if session_id:
+                try:
+                    camoufox_close_browser(session_id)
+                except Exception:
+                    pass
+
+    links, warnings = await asyncio.to_thread(_run_session_sync)
+    log.info(
+        "Camoufox agentic collector finished",
+        action="camoufox_agentic_collect",
+        meta={
+            "query": task.query,
+            "collected": len(links),
+            "warnings": len(warnings),
+        },
+    )
+    return HarvestSourceResult(
+        source_name="camoufox_agentic",
         source_type="browser",
         links=links,
         warnings=warnings,
@@ -391,10 +729,10 @@ def _browser_search_urls(task: HarvestTaskPlan) -> list[str]:
         return [f"https://duckduckgo.com/?q=site%3Afacebook.com+{encoded}"]
     if "instagram" in platform:
         return [f"https://duckduckgo.com/?q=site%3Ainstagram.com+{encoded}"]
-    if "news" in platform or platform in {"news", "web"}:
+    if "news" in platform or platform == "news":
         return [
-            f"https://news.google.com/search?q={encoded}",
             f"https://duckduckgo.com/?q={encoded}",
+            f"https://www.bing.com/search?q={encoded}",
         ]
     return [
         f"https://duckduckgo.com/?q={encoded}",
@@ -584,6 +922,7 @@ def select_expansion_seeds(
 
 __all__ = [
     "build_fallback_harvest_tasks",
+    "collect_camoufox_agentic_results",
     "collect_firecrawl_browser_results",
     "collect_firecrawl_results",
     "collect_serper_results",

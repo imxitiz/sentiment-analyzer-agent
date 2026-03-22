@@ -242,8 +242,15 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 - **Structured recovery emits explicit logs per stage**: start/fallback/success/failure paths are logged under `utils.structured_output` with schema + mode metadata for easier run forensics.
 - **Structured recovery now guards fallback invocation errors**: if the raw-text fallback call itself fails (for example provider timeout), utility returns a structured `failed` result with `fallback_error` metadata instead of crashing the agent path.
 - **Structured-disabled is now treated as a skip, not an error**: recovery results include `structured_skipped=True` when provider capability is intentionally off, and planner stores `planner_structured_skipped` artifact instead of `planner_structured_error` noise.
+- **BaseLLM structured calls now apply provider-tuned kwargs by default**: `invoke_structured()` auto-applies `{"method": "json_schema"}` for Ollama and `{"method": "json_schema", "strict": True}` for Google/OpenAI when call sites do not provide overrides.
+- **BaseLLM structured calls now request parsed+raw payloads when supported**: adapter tries `with_structured_output(..., include_raw=True)` so traces can preserve raw completions/parsing context without forcing extra model calls.
+- **Structured parse failures now persist raw completion text when available**: if provider errors include text such as `Failed to parse ... from completion ...`, adapter extracts and stores that completion in `llm_traces.output_text` even when `error_text` is present.
+- **Structured recovery now attempts parse-from-structured-error before fallback invoke**: when native structured invoke fails, recovery first tries extracting JSON candidates from the error payload; this can avoid an additional fallback text call and reduces token burn.
+- **`generate()` and `agenerate()` now persist DB traces too**: both methods route through traced `invoke_messages()` / `ainvoke_messages()` (`call_kind=generate_invoke` / `agenerate_invoke`) so prompt/response history is not lost for repair/fallback steps.
 - **Harvester + recovery sub-agents now share the same structured resilience path**: `HarvesterAgent._build_harvest_plan`, `ScraperRecoveryAgent`, `CleanerRecoveryAgent`, and `SentimentRecoveryAgent` no longer hard-fail immediately on malformed structured output.
 - **Harvester persistence now logs structured failure stages**: plan generation writes `harvester_plan_structured_error`, `harvester_plan_parse_error`, `harvester_plan_reask_error`, and `harvester_plan_repair_error` artifacts before deterministic fallback.
+- **Harvester structured planning now uses a compact schema contract prompt + provider-tuned strict JSON mode**: planner brief is trimmed (`_compact_planner_brief`), prompt enforces exact keys, Ollama uses `method="json_schema"`, Google/OpenAI try `method="json_schema", strict=True`, and fallback text invoke runs with `temperature=0` to reduce schema drift.
+- **Harvester re-ask budget is intentionally lower**: structured recovery for harvest planning now uses `max_reasks=1` to reduce token burn when first-pass schema generation fails.
 - **Torch does not ship cp313 wheels yet**. GPU sentiment testing currently requires Python 3.12 (use `.venv-py312` or another 3.12 venv).
 - **Transformers now requires `torch>=2.6` to load `.bin` weights** due to CVE-2025-32434, and the Cardiff model ships `pytorch_model.bin` (no safetensors). Upgrade torch or pick a safetensors model.
 - **GPU smoke test script** lives at `ForTesting/sentiment_gpu_smoke.py`, and a full run log is documented in `docs/testing/sentiment_gpu_smoke.md`.
@@ -265,6 +272,8 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 - **Web demo/live bridge is intentionally boundary-honest**: the server currently exposes planning + harvesting + scraping + cleaning. Demo mode simulates full pipeline phases, and live mode reads real planner/harvester/scraper/cleaner artifacts instead of fabricating sentiment output.
 - **Web clarification is now resumable**: `ask_human()` can pause a live web session, emit a `clarification_needed` event/message, and resume the blocked agent run when the user replies through the chat UI.
 - **Camoufox now has two roles**: one-shot harvesting helper (`camoufox_fetch_anchors`) and full stateful browser runtime (`agents/tools/browser.py`) with session lifecycle and Playwright-style interactions.
+- **Harvester now supports an autonomous Camoufox browser source**: `camoufox_agentic` runs a multi-step browser session (search-page discovery -> seed navigation -> optional extra hop) to capture discussion-rich links when static search misses dynamic content.
+- **Agentic Camoufox is bounded by runtime guards**: seed-page cap, hop cap, per-page link cap, and extracted-text cap are configurable via `HARVESTER_CAMOUFOX_AGENTIC_*` env flags.
 - **Logs** go to `logs/` (gitignored). If logs aren't appearing, check `LOG_FILE_ENABLED=true` in `.env`.
 - **Data** goes to `data/scrapes/` (gitignored). Each topic gets its own SQLite file.
 - **LangChain v1 API**: Use `create_agent` from `langchain.agents` (NOT `create_react_agent` from `langgraph.prebuilt` — that's deprecated). Pass `system_prompt=` (not `prompt=`).
@@ -274,13 +283,20 @@ This section captures **non-obvious discoveries, gotchas, shortcuts, and accumul
 - **Topic DB bootstrap is now orchestrator-owned**: when topic is received, orchestrator first writes to central `orchestrator.db` (`topic_runs`) and initializes topic DB before planner invocation.
 - **Agent lifecycle status is checkpointed in topic DB**: `agent_status` table tracks `working/retrying/completed/failed`, retry count, last error, and timestamps for resume/debug.
 - **Planner starts with LLM to get the query keywords for that topic, then programatically calls tools with query keywords to get idea of web content, then summarizes those snippets via LLM**. This is more transparent and debuggable than having the planner call tool(search_engine_snippets). So, at last PlannerAgent step, the agent gets full idea of the web-context when making the final plan, and that final plan is persisted in the topic DB.
+- **Planner + harvester prompts are now sentiment-first**: plans should explicitly target public reactions/opinions and balanced polarity (supportive/critical/neutral), not only topical mentions.
+- **Planner web-context query parsing must not split on whitespace**: splitting LLM output by spaces produced junk searches (`Here`, `are`, `useful`) and poisoned web-context summaries; extraction now splits by commas/newlines and filters singleton filler tokens.
 - **Harvester persistence now uses a two-layer model**: `discovered_links` stores canonical deduplicated URLs, while `link_observations` stores every raw observation from every source. Deduplication happens in the async writer, not in source code.
+- **Harvester plan recovery now enforces executable tasks**: post-recovery normalization maps source aliases (`news/social/browser/...`) onto runtime source names and falls back to deterministic plan if tasks remain non-executable, preventing "completed with 0 observations" runs.
 - **Harvester now records LLM traces too**: `HarvesterAgent.invoke()` enters `llm_trace_context`, so harvest-plan LLM input/output should appear in topic DB `llm_traces` alongside planner traces.
 - **Camoufox collector now runs in worker threads**: `collect_camoufox_browser_results()` wraps `camoufox_fetch_anchors()` with `asyncio.to_thread(...)` and uses query URLs, avoiding the sync-Playwright-inside-async-loop runtime error.
 - **Camoufox harvesting now forces true headless mode**: collectors pass `headless=True` to avoid the `Xvfb` requirement of Camoufox `virtual` mode in server/CI environments.
+- **Camoufox agentic sessions must stay thread-affine**: starting a sync Playwright/Camoufox session in one worker thread and then calling navigate/extract from other threads can raise greenlet/thread errors. Keep the full agentic browser lifecycle (start → navigate/extract hops → close) inside a single `asyncio.to_thread(...)` call.
+- **Camoufox browser/agentic quality gates are stricter by default**: low-signal navigation/query URLs (search tabs, sign-in/service login, assist params) are filtered earlier, and camoufox browser batches de-duplicate normalized URLs before scoring/persistence.
 - **Harvester no longer performs Crawlbase expansion**: harvesting now focuses on Serper + Firecrawl + Camoufox browser discovery; Crawlbase remains available for scraper/rendered fetch use-cases.
 - **Platform labeling now includes wiki/common domains**: domain inference recognizes `wikipedia.org`/`wikidata.org` as `wiki` plus additional platform labels (`hackernews`, `bluesky`, `github`, `medium`, `substack`).
 - **Platform labels must stay canonical for scraper routing**: `discovered_links.platform`/`link_observations.platform` should only contain compact routing labels (for example `web`, `news_site`, `reddit`, `x`, `facebook`, `instagram`, `youtube`, `tiktok`, `wiki`). Never persist descriptive planner text into `platform`; normalize hints and fall back to domain inference.
+- **Domain classification now has priority over planner/LLM hints**: platform persistence and quality scoring should infer from normalized URL/domain first; hints are only a last-resort fallback when domain-based routing cannot classify the URL. This prevents mislabels like `facebook.com`/`wikipedia.org` being stored as `news_site`.
+- **Default orchestrator sub-agents must inherit both provider and model**: when `OrchestratorAgent` auto-builds Planner/Harvester/Scraper/Cleaner/Sentiment agents, forward `model`/`llm_model` (plus generation knobs) in addition to `llm_provider`; otherwise sub-agents silently fall back to their own defaults (for example `gemini-2.5-flash`).
 - **`published_at` should be recovered from raw payloads when available**: the writer now attempts to parse common date keys (`date`, `published_at`, `pubDate`, timestamps), and metadata backfill runs at harvester start so existing topic rows can be repaired.
 - **New harvest sources available**: adapters for SerpAPI (search) and Camoufox (browser discovery) live under `utils/serpapi.py` and `utils/camoufox.py`. The Camoufox helper supports three modes:
   1. remote HTTP server (`CAMOUFOX_ENDPOINT`),
@@ -587,6 +603,11 @@ class State(TypedDict):
 | `HARVESTER_ENABLE_CRAWLBASE` | No | `false` | Legacy flag (harvester expansion is disabled; Crawlbase remains useful in scraper flows) |
 | `HARVESTER_ENABLE_SERPAPI` | No | `false` | Enable SerpAPI search collection |
 | `HARVESTER_ENABLE_CAMOUFOX` | No | `false` | Enable Camoufox browser discovery (requires either a server, the Python package, or CLI) |
+| `HARVESTER_ENABLE_CAMOUFOX_AGENTIC` | No | `true` | Enable autonomous multi-step Camoufox browser collector (`camoufox_agentic`) |
+| `HARVESTER_CAMOUFOX_AGENTIC_MAX_SEED_PAGES` | No | `10` | Max top candidate pages navigated per task in autonomous Camoufox mode |
+| `HARVESTER_CAMOUFOX_AGENTIC_MAX_HOPS` | No | `2` | Max navigation depth for autonomous Camoufox mode |
+| `HARVESTER_CAMOUFOX_AGENTIC_LINKS_PER_PAGE` | No | `25` | Max anchors extracted per page during autonomous Camoufox collection |
+| `HARVESTER_CAMOUFOX_AGENTIC_EXTRACT_CHARS` | No | `1200` | Max body-text chars captured per visited page for relevance/sentiment cues |
 | `CAMOUFOX_ENDPOINT` | No | — | URL of a running Camoufox HTTP server; if unset local Python/CLI mode is used. |
 | `CAMOUFOX_CLI_PATH` | No | — | Optional explicit path to the `camoufox` CLI binary (e.g. `/usr/bin/python3 -m camoufox`). |
 | `SCRAPER_MAX_CONCURRENCY` | No | `6` | Maximum concurrent deep-scrape workers |
@@ -681,6 +702,7 @@ Per-agent override pattern (optional):
 13. Create session → start analysis → check WebSocket events stream correctly, including clarification pause/resume when `ask_human()` is invoked
 14. `cd Interface && bun build src/frontend.tsx --outdir=dist` compiles 608 modules without errors
 15. `from utils.camoufox import camoufox_fetch_anchors` should raise a ``RuntimeError`` when no endpoint, package, or CLI is available (covered by tests/test_camoufox.py).
+16. `uv run pytest -q tests/test_harvester_camoufox_agentic.py` validates autonomous Camoufox collector behavior (availability warning path + successful multi-hop collection path).
 
 ---
 

@@ -45,9 +45,7 @@ def _to_bool(value: str | None, default: bool) -> bool:
 def _to_tuple(value: str | None) -> tuple[str, ...]:
     if not value:
         return ()
-    return tuple(
-        part.strip().lower() for part in value.split(",") if part.strip()
-    )
+    return tuple(part.strip().lower() for part in value.split(",") if part.strip())
 
 
 def build_sentiment_runtime_config() -> SentimentRuntimeConfig:
@@ -65,12 +63,8 @@ def build_sentiment_runtime_config() -> SentimentRuntimeConfig:
             config.get("SENTIMENT_MAX_DOCUMENTS_PER_RUN"), 500
         ),
         max_text_chars=_to_int(config.get("SENTIMENT_MAX_TEXT_CHARS"), 4000),
-        positive_threshold=_to_float(
-            config.get("SENTIMENT_POSITIVE_THRESHOLD"), 0.6
-        ),
-        negative_threshold=_to_float(
-            config.get("SENTIMENT_NEGATIVE_THRESHOLD"), 0.4
-        ),
+        positive_threshold=_to_float(config.get("SENTIMENT_POSITIVE_THRESHOLD"), 0.6),
+        negative_threshold=_to_float(config.get("SENTIMENT_NEGATIVE_THRESHOLD"), 0.4),
         include_topic_context=_to_bool(
             config.get("SENTIMENT_INCLUDE_TOPIC_CONTEXT"), True
         ),
@@ -84,9 +78,7 @@ def build_sentiment_runtime_config() -> SentimentRuntimeConfig:
             config.get("SENTIMENT_CUSTOM_KEYWORDS_NEGATIVE")
         ),
         llm_plan_enabled=_to_bool(config.get("SENTIMENT_LLM_PLAN_ENABLED"), True),
-        llm_plan_sample_size=_to_int(
-            config.get("SENTIMENT_LLM_PLAN_SAMPLE_SIZE"), 10
-        ),
+        llm_plan_sample_size=_to_int(config.get("SENTIMENT_LLM_PLAN_SAMPLE_SIZE"), 10),
         llm_fallback_enabled=_to_bool(
             config.get("SENTIMENT_LLM_FALLBACK_ENABLED"), True
         ),

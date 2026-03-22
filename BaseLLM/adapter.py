@@ -21,6 +21,7 @@ Contract
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -214,6 +215,7 @@ class BaseLLMAdapter(ABC):
         *,
         schema_model: Any,
         call_kind: str = "structured_invoke",
+        structured_kwargs: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> Any:
         """Invoke with structured-output binding and persist trace rows."""
@@ -223,14 +225,76 @@ class BaseLLMAdapter(ABC):
         input_text = "\n".join(
             str(m.get("content", "")) for m in input_messages if m.get("content")
         )
+        effective_structured_kwargs = (
+            dict(structured_kwargs)
+            if structured_kwargs is not None
+            else self._default_structured_kwargs()
+        )
         try:
-            structured_llm = self.chat_model.with_structured_output(schema_model)
-            result = structured_llm.invoke(messages, **kwargs)
-            elapsed_ms = (time.perf_counter() - started) * 1000.0
-            if hasattr(result, "model_dump_json"):
-                output_text = result.model_dump_json(indent=2)
+            used_include_raw = False
+            if effective_structured_kwargs:
+                try:
+                    structured_llm = self.chat_model.with_structured_output(
+                        schema_model,
+                        include_raw=True,
+                        **effective_structured_kwargs,
+                    )
+                    used_include_raw = True
+                except TypeError:
+                    try:
+                        structured_llm = self.chat_model.with_structured_output(
+                            schema_model,
+                            include_raw=True,
+                        )
+                        used_include_raw = True
+                    except TypeError:
+                        structured_llm = self.chat_model.with_structured_output(
+                            schema_model,
+                            **effective_structured_kwargs,
+                        )
             else:
-                output_text = json.dumps(result, ensure_ascii=False, default=str)
+                try:
+                    structured_llm = self.chat_model.with_structured_output(
+                        schema_model,
+                        include_raw=True,
+                    )
+                    used_include_raw = True
+                except TypeError:
+                    structured_llm = self.chat_model.with_structured_output(
+                        schema_model
+                    )
+
+            result = structured_llm.invoke(messages, **kwargs)
+            trace_meta: dict[str, Any] = {
+                "schema": getattr(schema_model, "__name__", str(schema_model)),
+                "structured_kwargs": effective_structured_kwargs,
+                "include_raw": used_include_raw,
+            }
+            parsed_result = result
+
+            if isinstance(result, dict) and (
+                "parsed" in result or "raw" in result or "parsing_error" in result
+            ):
+                parsed_result = result.get("parsed")
+                raw_message = result.get("raw")
+                parsing_error = result.get("parsing_error")
+
+                if raw_message is not None:
+                    raw_text = self._extract_text(raw_message)
+                    if raw_text:
+                        trace_meta["raw_preview"] = raw_text[:2000]
+
+                if parsing_error:
+                    raise RuntimeError(
+                        "Structured parsing failed: "
+                        f"{parsing_error}. Raw output: {trace_meta.get('raw_preview', '')}"
+                    )
+
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
+            if hasattr(parsed_result, "model_dump_json"):
+                output_text = parsed_result.model_dump_json(indent=2)
+            else:
+                output_text = json.dumps(parsed_result, ensure_ascii=False, default=str)
             self._record_trace(
                 request_id=trace_id,
                 call_kind=call_kind,
@@ -238,19 +302,25 @@ class BaseLLMAdapter(ABC):
                 input_text=input_text,
                 output_text=output_text,
                 latency_ms=elapsed_ms,
-                meta={"schema": getattr(schema_model, "__name__", str(schema_model))},
+                meta=trace_meta,
             )
-            return result
+            return parsed_result
         except Exception as exc:
             elapsed_ms = (time.perf_counter() - started) * 1000.0
+            error_text = str(exc)
+            extracted_output = self._extract_completion_from_error(error_text)
             self._record_trace(
                 request_id=trace_id,
                 call_kind=call_kind,
                 input_messages=input_messages,
                 input_text=input_text,
-                error_text=str(exc),
+                output_text=extracted_output,
+                error_text=error_text,
                 latency_ms=elapsed_ms,
-                meta={"schema": getattr(schema_model, "__name__", str(schema_model))},
+                meta={
+                    "schema": getattr(schema_model, "__name__", str(schema_model)),
+                    "structured_kwargs": effective_structured_kwargs,
+                },
             )
             raise
 
@@ -278,7 +348,11 @@ class BaseLLMAdapter(ABC):
         messages = [HumanMessage(content=prompt)]
         t0 = time.perf_counter()
         try:
-            response = self.chat_model.invoke(messages, **kwargs)
+            response = self.invoke_messages(
+                messages,
+                call_kind="generate_invoke",
+                **kwargs,
+            )
             text = self._extract_text(response)
             elapsed = time.perf_counter() - t0
 
@@ -333,7 +407,11 @@ class BaseLLMAdapter(ABC):
         messages = [HumanMessage(content=prompt)]
         t0 = time.perf_counter()
         try:
-            response = await self.chat_model.ainvoke(messages, **kwargs)
+            response = await self.ainvoke_messages(
+                messages,
+                call_kind="agenerate_invoke",
+                **kwargs,
+            )
             text = self._extract_text(response)
             elapsed = time.perf_counter() - t0
 
@@ -388,6 +466,49 @@ class BaseLLMAdapter(ABC):
                 content_text = str(content)
             serialized.append({"role": str(role), "content": content_text})
         return serialized
+
+    def _default_structured_kwargs(self) -> dict[str, Any]:
+        """Return provider-tuned defaults for native structured output.
+
+        These defaults reduce schema drift without requiring each agent to pass
+        provider-specific kwargs explicitly.
+        """
+        provider = str(self._provider or "").lower()
+        if provider == "ollama":
+            return {"method": "json_schema"}
+        if provider in {"google", "openai"}:
+            return {"method": "json_schema", "strict": True}
+        return {}
+
+    @staticmethod
+    def _extract_completion_from_error(error_text: str) -> str | None:
+        """Try to recover raw completion text from provider parse errors.
+
+        Some LangChain/provider exceptions include the model completion inline
+        (for example: ``Failed to parse ... from completion {...}``).
+        """
+        if not error_text:
+            return None
+
+        patterns = (
+            r"from completion\s+([\s\S]+)$",
+            r"completion:\s*([\s\S]+)$",
+            r"raw output:\s*([\s\S]+)$",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, error_text, flags=re.IGNORECASE)
+            if not match:
+                continue
+            candidate = match.group(1).strip()
+            if candidate:
+                return candidate
+
+        # Last resort: capture the largest balanced JSON object in the error text.
+        start = error_text.find("{")
+        end = error_text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            return error_text[start : end + 1]
+        return None
 
     def _record_trace(
         self,

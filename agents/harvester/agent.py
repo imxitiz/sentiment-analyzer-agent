@@ -22,6 +22,7 @@ from agents.services import (
     AsyncLinkWriter,
     backfill_harvest_metadata,
     build_fallback_harvest_tasks,
+    collect_camoufox_agentic_results,
     collect_firecrawl_browser_results,
     collect_firecrawl_results,
     collect_serper_results,
@@ -54,6 +55,26 @@ class HarvesterAgent(BaseAgent):
     _llm_model = "gemini-2.5-flash"
     _timeout_seconds = 1200
     _max_retries = 2
+
+    _SOURCE_ALIASES: dict[str, tuple[str, ...]] = {
+        "serper": (
+            "serper",
+            "search",
+            "web",
+            "news",
+            "social",
+            "reddit",
+            "twitter",
+            "x",
+            "facebook",
+            "youtube",
+        ),
+        "firecrawl_search": ("firecrawl_search", "firecrawl", "firecrawl-news"),
+        "firecrawl_browser": ("firecrawl_browser", "browser", "rendered_browser"),
+        "camoufox_browser": ("camoufox_browser", "camoufox", "camoufox_rendered"),
+        "camoufox_agentic": ("camoufox_agentic", "agentic_browser", "agentic_camoufox"),
+        "serpapi": ("serpapi",),
+    }
 
     def invoke(self, message: str, **kwargs: Any) -> dict[str, Any]:
         topic = message.strip()
@@ -240,23 +261,33 @@ class HarvesterAgent(BaseAgent):
         # raise if nothing is usable.  Users still must set the runtime flag.
         if runtime.enable_camoufox:
             available_sources.append("camoufox_browser")
+            if runtime.enable_camoufox_agentic:
+                available_sources.append("camoufox_agentic")
 
         prompt_input = {
             "topic": topic,
-            "planner_brief": {
-                "topic_summary": brief.topic_summary,
-                "keywords": brief.keywords,
-                "hashtags": brief.hashtags,
-                "platforms": brief.platforms,
-                "search_queries": brief.search_queries,
-                "estimated_volume": brief.estimated_volume,
-                "stop_condition": brief.stop_condition,
-                "reasoning": brief.reasoning,
-            },
+            "planner_brief": self._compact_planner_brief(brief),
             "available_sources": available_sources,
             "max_links": runtime.max_links,
             "per_query_limit": runtime.per_query_limit,
             "min_quality_score": runtime.min_quality_score,
+            "target_task_count": min(14, max(6, len(brief.search_queries[:14]))),
+            "schema_contract": {
+                "summary": "string",
+                "source_order": "array<string>",
+                "max_links": "integer",
+                "min_quality_score": "float",
+                "tasks": [
+                    {
+                        "query": "string",
+                        "platform_hint": "string",
+                        "source_names": "array<string>",
+                        "target_results": "integer",
+                        "rationale": "string",
+                    }
+                ],
+                "reasoning": "string",
+            },
         }
         self._checkpoint_artifact(
             topic=topic,
@@ -269,7 +300,11 @@ class HarvesterAgent(BaseAgent):
             HumanMessage(
                 content=(
                     "Build a harvesting plan for this topic and planner brief. "
-                    "Return only valid JSON for the HarvestPlan schema.\n\n"
+                    "Return exactly one valid JSON object for the HarvestPlan schema.\n"
+                    "Use EXACT top-level keys: summary, source_order, max_links, min_quality_score, tasks, reasoning.\n"
+                    "Each tasks item MUST contain only: query, platform_hint, source_names, target_results, rationale.\n"
+                    "Do not include markdown, commentary, code fences, or trailing text.\n"
+                    "Do not add any extra keys.\n\n"
                     f"{json.dumps(prompt_input, ensure_ascii=False, indent=2)}"
                 )
             ),
@@ -290,9 +325,21 @@ class HarvesterAgent(BaseAgent):
             schema_model=HarvestPlan,
             messages=messages,
             supports_structured=self._llm_adapter.supports_structured_output,
+            structured_invoke_kwargs=self._structured_invoke_kwargs(),
             fallback_text_getter=_fallback_text_getter,
-            repair_prompt_builder=self._build_harvest_plan_repair_prompt,
-            max_reasks=2,
+            normalize_payload=lambda payload: self._normalize_harvest_plan_payload(
+                payload,
+                available_sources=available_sources,
+                per_query_limit=runtime.per_query_limit,
+            ),
+            repair_prompt_builder=(
+                lambda raw: self._build_harvest_plan_repair_prompt(
+                    raw_text=raw,
+                    available_sources=available_sources,
+                    per_query_limit=runtime.per_query_limit,
+                )
+            ),
+            max_reasks=1,
             repair_max_tokens=2048,
         )
 
@@ -327,7 +374,23 @@ class HarvesterAgent(BaseAgent):
 
         plan = recovery.value
         if plan is not None and plan.tasks:
-            return plan
+            normalized_plan = self._normalize_harvest_plan(
+                plan=plan,
+                available_sources=available_sources,
+                runtime=runtime,
+            )
+            if normalized_plan is not None and normalized_plan.tasks:
+                return normalized_plan
+
+            self._checkpoint_artifact(
+                topic=topic,
+                artifact_type="harvester_plan_non_executable",
+                value="LLM plan parsed but had no executable tasks after source normalization",
+                meta={
+                    "mode": recovery.mode,
+                    "available_sources": available_sources,
+                },
+            )
 
         self._checkpoint_artifact(
             topic=topic,
@@ -338,17 +401,250 @@ class HarvesterAgent(BaseAgent):
         return self._demo_plan(brief, runtime)
 
     @staticmethod
-    def _build_harvest_plan_repair_prompt(raw_text: str) -> str:
+    def _build_harvest_plan_repair_prompt(
+        raw_text: str,
+        available_sources: list[str],
+        per_query_limit: int,
+    ) -> str:
         return (
             "Convert the following harvester planning output into strict JSON for HarvestPlan. "
             "Return JSON object only with keys: summary, source_order, max_links, "
-            "min_quality_score, tasks. "
-            "Each tasks item must include: source, query, rationale, desired_count, "
-            "priority, query_type, required, tags. "
+            "min_quality_score, tasks, reasoning. "
+            "Each tasks item must include: query, platform_hint, source_names, target_results, rationale. "
+            f"source_names entries must be selected only from: {available_sources}. "
+            f"target_results must be an integer between 1 and {max(1, int(per_query_limit))}. "
             "No markdown, no extra text.\n\n"
             "Raw output:\n"
             f"{raw_text}"
         )
+
+    def _normalize_source_name(
+        self, source: str, available_sources: list[str]
+    ) -> str | None:
+        candidate = str(source or "").strip().lower().replace("-", "_")
+        if not candidate:
+            return None
+        if candidate in available_sources:
+            return candidate
+        for canonical, aliases in self._SOURCE_ALIASES.items():
+            if candidate == canonical or candidate in aliases:
+                return canonical if canonical in available_sources else None
+        return None
+
+    @staticmethod
+    def _compact_planner_brief(brief: Any) -> dict[str, Any]:
+        """Trim planner context so structured planning prompt stays concise and robust."""
+        platforms: list[dict[str, str]] = []
+        for item in brief.platforms[:6]:
+            platforms.append(
+                {
+                    "name": str(item.get("name", "")).strip(),
+                    "priority": str(item.get("priority", "")).strip(),
+                    "reason": str(item.get("reason", "")).strip()[:180],
+                }
+            )
+
+        return {
+            "topic_summary": str(brief.topic_summary or "")[:400],
+            "keywords": [str(item) for item in brief.keywords[:12]],
+            "hashtags": [str(item) for item in brief.hashtags[:8]],
+            "platforms": platforms,
+            "search_queries": [str(item) for item in brief.search_queries[:14]],
+            "estimated_volume": str(brief.estimated_volume or "")[:300],
+            "stop_condition": str(brief.stop_condition or "")[:300],
+            "reasoning": str(brief.reasoning or "")[:500],
+        }
+
+    def _structured_invoke_kwargs(self) -> dict[str, Any]:
+        """Provider-tuned structured invocation kwargs.
+
+        Ollama structured outputs are more reliable with JSON schema mode
+        on newer servers/models. If unsupported, adapter falls back safely.
+        """
+        provider = str(getattr(self._llm_adapter, "_provider", "")).lower()
+        if provider == "ollama":
+            return {"method": "json_schema"}
+        if provider in {"google", "openai"}:
+            return {"method": "json_schema", "strict": True}
+        return {}
+
+    def _normalize_harvest_plan(
+        self,
+        *,
+        plan: HarvestPlan,
+        available_sources: list[str],
+        runtime: HarvesterRuntimeConfig,
+    ) -> HarvestPlan | None:
+        normalized_tasks: list[HarvestTaskPlan] = []
+        fallback_source = available_sources[0] if available_sources else "serper"
+
+        for task in plan.tasks:
+            query = str(task.query or "").strip()
+            if not query:
+                continue
+
+            normalized_sources: list[str] = []
+            for source_name in task.source_names:
+                normalized = self._normalize_source_name(source_name, available_sources)
+                if normalized and normalized not in normalized_sources:
+                    normalized_sources.append(normalized)
+
+            if not normalized_sources:
+                normalized_sources = [fallback_source]
+
+            target_results = max(
+                1, min(int(task.target_results), runtime.per_query_limit)
+            )
+            platform_hint = str(task.platform_hint or "web").strip() or "web"
+            rationale = str(
+                task.rationale or "Harvest candidate links for sentiment analysis"
+            ).strip()
+
+            normalized_tasks.append(
+                HarvestTaskPlan(
+                    query=query,
+                    platform_hint=platform_hint,
+                    source_names=normalized_sources,
+                    target_results=target_results,
+                    rationale=rationale,
+                )
+            )
+
+        if not normalized_tasks:
+            return None
+
+        source_order: list[str] = []
+        for source_name in plan.source_order:
+            normalized = self._normalize_source_name(source_name, available_sources)
+            if normalized and normalized not in source_order:
+                source_order.append(normalized)
+        if not source_order:
+            source_order = list(dict.fromkeys(available_sources))
+
+        return HarvestPlan(
+            summary=str(plan.summary or "Harvest links for sentiment pipeline"),
+            source_order=source_order,
+            max_links=runtime.max_links,
+            min_quality_score=runtime.min_quality_score,
+            tasks=normalized_tasks,
+            reasoning=str(plan.reasoning or "Normalized from recovered plan"),
+        )
+
+    def _normalize_harvest_plan_payload(
+        self,
+        payload: Any,
+        *,
+        available_sources: list[str],
+        per_query_limit: int,
+    ) -> Any:
+        """Normalize loose model JSON into HarvestPlan-compatible payload.
+
+        This improves first-pass schema recovery for providers that emit mostly
+        correct JSON but miss a few required fields.
+        """
+        if not isinstance(payload, dict):
+            return payload
+
+        normalized: dict[str, Any] = dict(payload)
+        normalized["summary"] = str(normalized.get("summary") or "Harvest plan")
+        normalized["reasoning"] = str(
+            normalized.get("reasoning") or "Recovered from partial structured output"
+        )
+
+        source_order = normalized.get("source_order")
+        if isinstance(source_order, str):
+            normalized["source_order"] = [source_order]
+        elif isinstance(source_order, list):
+            normalized["source_order"] = [
+                str(item) for item in source_order if str(item).strip()
+            ]
+        else:
+            normalized["source_order"] = list(available_sources)
+
+        max_links = normalized.get("max_links")
+        try:
+            # Provide default of 0 before int() to handle None case properly
+            normalized["max_links"] = max(
+                1, int(max_links if max_links is not None else 0)
+            )
+        except (TypeError, ValueError):
+            normalized["max_links"] = 1000
+
+        min_quality_score = normalized.get("min_quality_score")
+        try:
+            # Provide default of 0.0 before float() to handle None case properly
+            normalized["min_quality_score"] = max(
+                0.0, float(min_quality_score if min_quality_score is not None else 0.0)
+            )
+        except (TypeError, ValueError):
+            normalized["min_quality_score"] = 0.35
+
+        fallback_source = available_sources[0] if available_sources else "serper"
+        tasks = normalized.get("tasks")
+        normalized_tasks: list[dict[str, Any]] = []
+        if isinstance(tasks, list):
+            for item in tasks:
+                if not isinstance(item, dict):
+                    continue
+
+                query = str(item.get("query") or "").strip()
+                if not query:
+                    continue
+
+                source_names = item.get("source_names")
+                if source_names is None:
+                    legacy_source = item.get("source") or item.get("source_name")
+                    source_names = (
+                        [legacy_source] if legacy_source else [fallback_source]
+                    )
+                if isinstance(source_names, str):
+                    source_names = [source_names]
+                if not isinstance(source_names, list):
+                    source_names = [fallback_source]
+
+                normalized_sources: list[str] = []
+                for source_name in source_names:
+                    normalized_source = self._normalize_source_name(
+                        str(source_name),
+                        available_sources,
+                    )
+                    if (
+                        normalized_source
+                        and normalized_source not in normalized_sources
+                    ):
+                        normalized_sources.append(normalized_source)
+                if not normalized_sources:
+                    normalized_sources = [fallback_source]
+
+                target_results = item.get("target_results")
+                if target_results is None:
+                    target_results = item.get("desired_count")
+                # Provide default of 0 before int() to handle None case properly
+                try:
+                    target_results_int = int(
+                        target_results if target_results is not None else 0
+                    )
+                except (TypeError, ValueError):
+                    target_results_int = 10
+                target_results_int = max(1, min(target_results_int, per_query_limit))
+
+                platform_hint = str(item.get("platform_hint") or "web").strip() or "web"
+                rationale = str(
+                    item.get("rationale") or "Harvest candidate links"
+                ).strip()
+
+                normalized_tasks.append(
+                    {
+                        "query": query,
+                        "platform_hint": platform_hint,
+                        "source_names": normalized_sources,
+                        "target_results": target_results_int,
+                        "rationale": rationale,
+                    }
+                )
+
+        normalized["tasks"] = normalized_tasks
+        return normalized
 
     def _demo_plan(self, brief: Any, runtime: HarvesterRuntimeConfig) -> HarvestPlan:
         tasks = build_fallback_harvest_tasks(brief, runtime)
@@ -402,6 +698,17 @@ class HarvesterAgent(BaseAgent):
             enable_crawlbase=_as_bool("HARVESTER_ENABLE_CRAWLBASE", False),
             enable_serpapi=_as_bool("HARVESTER_ENABLE_SERPAPI", False),
             enable_camoufox=_as_bool("HARVESTER_ENABLE_CAMOUFOX", False),
+            enable_camoufox_agentic=_as_bool("HARVESTER_ENABLE_CAMOUFOX_AGENTIC", True),
+            camoufox_agentic_max_seed_pages=_as_int(
+                "HARVESTER_CAMOUFOX_AGENTIC_MAX_SEED_PAGES", 10
+            ),
+            camoufox_agentic_max_hops=_as_int("HARVESTER_CAMOUFOX_AGENTIC_MAX_HOPS", 2),
+            camoufox_agentic_links_per_page=_as_int(
+                "HARVESTER_CAMOUFOX_AGENTIC_LINKS_PER_PAGE", 25
+            ),
+            camoufox_agentic_extract_chars=_as_int(
+                "HARVESTER_CAMOUFOX_AGENTIC_EXTRACT_CHARS", 1200
+            ),
         )
 
     async def _collect_search_batches(
@@ -430,15 +737,21 @@ class HarvesterAgent(BaseAgent):
             )
 
             source_map["camoufox_browser"] = collect_camoufox_browser_results
+            if runtime.enable_camoufox_agentic:
+                source_map["camoufox_agentic"] = collect_camoufox_agentic_results
 
         semaphore = asyncio.Semaphore(runtime.max_concurrency)
+        camoufox_semaphore = asyncio.Semaphore(1)
         results: list[Any] = []
 
         async def _run_task(task: HarvestTaskPlan, source_name: str) -> None:
             collector = source_map.get(source_name)
             if collector is None or writer.is_full:
                 return
-            async with semaphore:
+            active_semaphore = (
+                camoufox_semaphore if source_name.startswith("camoufox_") else semaphore
+            )
+            async with active_semaphore:
                 result = await asyncio.wait_for(
                     collector(
                         task,

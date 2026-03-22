@@ -21,6 +21,9 @@ Given a topic, generate a comprehensive research plan that covers:
 ## Guidelines
 
 - Think about the topic from multiple angles: supporters, critics, neutral observers, experts.
+- Prioritise content that contains explicit opinions, reactions, praise, criticism, concerns, and public discussion signals.
+- Ensure polarity balance in search strategy: include queries likely to capture positive, negative, and neutral narratives.
+- Include at least 5 queries that target conversations/comments/discussion threads (not only news headlines).
 - Consider regional / language variations if relevant.
 - Prioritise recency — focus on recent discussions unless the topic is historical.
 - Be practical: these keywords and queries will be used programmatically.

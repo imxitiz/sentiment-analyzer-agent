@@ -43,6 +43,9 @@ project-includes = [
     "**/*.py*",
     "**/*.ipynb",
 ]
+project-excludes = [
+    "**/copilot-langchain/**",
+]
 python-platform = "linux"
 
 [tool.ruff.lint]

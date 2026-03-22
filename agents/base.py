@@ -115,7 +115,8 @@ class BaseAgent(ABC):
             **llm_kwargs: Forwarded to ``get_llm()``.
         """
         provider = llm_provider or self._llm_provider
-        model_name = model or self._llm_model
+        llm_model_alias = llm_kwargs.pop("llm_model", None)
+        model_name = model or llm_model_alias or self._llm_model
 
         self._llm_adapter: BaseLLMAdapter = get_llm(
             provider,

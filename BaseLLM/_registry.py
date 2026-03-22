@@ -64,8 +64,7 @@ OPENAI_DEFAULT: str = "gpt-4o-mini"
 
 # ── GitHub Copilot (langchain-copilot) ──────────────────────────────────
 COPILOT_MODELS: tuple[str, ...] = (
-    "gpt-4o"
-    "gpt-4.1",
+    "gpt-4ogpt-4.1",
     "gpt-5-mini",
 )
 
